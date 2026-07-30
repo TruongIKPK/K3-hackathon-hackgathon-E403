@@ -95,6 +95,30 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .region-action-btn:hover { color:#991b1b; border-color:#fecaca; background:#fff1f2; }
 .region-action-btn.parse-btn:hover,.region-action-btn.locate-btn:hover { color:var(--navy); border-color:#9bbce0; background:var(--blue-soft); }
 .region-action-btn.pin-btn:hover,.region-action-btn.pin-btn.active { color:#92400e; border-color:#f3c66b; background:#fef3c7; }
+.region-card.quality-warning { border-color:#f4ca74; }
+.region-card.quality-blocked { border-color:#f2a6a6; background:#fffafa; }
+.quality-pill { padding:3px 7px; border-radius:999px; font-size:9px; font-weight:850; white-space:nowrap; }
+.quality-pill.good { color:#11643d; background:#e5f6ed; }
+.quality-pill.warning { color:#854d0e; background:#fef3c7; }
+.quality-pill.blocked { color:#991b1b; background:#fee2e2; }
+.quality-pill.override { color:#6b3f0a; background:#ffedd5; }
+.region-action-btn:disabled { cursor:not-allowed; opacity:.42; }
+.quality-panel { margin-top:13px; padding:12px; border:1px solid; border-radius:11px; font-size:11px; line-height:1.45; }
+.quality-panel-heading { display:flex; justify-content:space-between; gap:10px; align-items:center; }
+.quality-panel-heading span { font-size:10px; font-weight:800; white-space:nowrap; }
+.quality-panel p { margin:5px 0 0; }
+.quality-panel ul { margin:7px 0 0; padding-left:18px; }
+.quality-panel.good { color:#14532d; border-color:#bbf7d0; background:#f0fdf4; }
+.quality-panel.warning { color:#713f12; border-color:#fde68a; background:#fffbeb; }
+.quality-panel.blocked { color:#7f1d1d; border-color:#fecaca; background:#fff1f2; }
+.quality-panel.override { color:#7c2d12; border-color:#fed7aa; background:#fff7ed; }
+.quality-actions { margin-top:10px; display:flex; flex-wrap:wrap; gap:7px; }
+.quality-actions button,.quality-reset-button { padding:6px 9px; border:1px solid currentColor; border-radius:8px; color:inherit; background:white; font-size:10px; font-weight:800; }
+.quality-actions .use-anyway { color:#fff; border-color:#9a3412; background:#9a3412; }
+.quality-reset-button { margin-top:9px; }
+.chip:disabled { cursor:not-allowed; filter:grayscale(.45); opacity:.58; }
+.context-quality-count { padding:2px 6px; border-radius:999px; color:#11643d; background:#dcfce7; font-size:9px; font-weight:800; white-space:nowrap; }
+.context-quality-warning { padding:6px 12px; border-bottom:1px solid #fecaca; color:#991b1b; background:#fff1f2; font-size:10px; font-weight:700; }
 
 /* Collapsible ChatWidget Styles */
 .chat-widget-container { position:fixed; bottom:24px; right:24px; z-index:99; }

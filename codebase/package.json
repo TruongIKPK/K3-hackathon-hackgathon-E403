@@ -9,7 +9,7 @@
     "dev": "node scripts/run-vinext.cjs dev",
     "build": "node scripts/run-vinext.cjs build",
     "start": "node scripts/run-vinext.cjs start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs",
+    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/region-quality.test.mjs",
     "lint": "eslint app --max-warnings 0",
     "db:generate": "drizzle-kit generate"
   },

@@ -8,6 +8,7 @@ MVP mô phỏng lát cắt chức năng khoanh vùng trên VLearn:
 - giữ vùng theo từng trang trong RAM, chỉnh lại text OCR và pin vùng xuyên slide;
 - so sánh các vùng đã pin bằng chatbot;
 - tự động bổ sung text toàn slide chứa vùng và cửa sổ slide lân cận -1/+1, khử trùng khi nhiều vùng dùng chung trang;
+- chấm chất lượng vùng theo hình học và OCR, cảnh báo vùng lệch/nhiễu, tạm loại vùng vô nghĩa khỏi chatbot nhưng cho phép người dùng xác nhận dùng tiếp;
 - bấm citation `[Vùng n]` hoặc `[Slide n]` để quay về đúng polygon hay slide nguồn.
 
 PDF, polygon, ảnh crop và trạng thái pin chỉ tồn tại trong RAM của phiên trình duyệt. OCR và chatbot được gọi qua các API route; MVP chưa lưu tài liệu hoặc lịch sử vào cơ sở dữ liệu.
@@ -37,8 +38,9 @@ npm run lint
 2. Chờ slide đầu tiên hiển thị, dùng nút mũi tên để đổi trang nếu cần.
 3. Giữ chuột/bút và vẽ một hoặc nhiều đường bao quanh nội dung.
 4. Kiểm tra crop và sửa text OCR nếu cần; có thể ghim vùng rồi chuyển sang slide khác.
-5. Ghim ít nhất hai vùng và chọn **So sánh vùng đã ghim**.
-6. Bấm citation `[Vùng n]` để highlight polygon hoặc `[Slide n]` để mở slide ngữ cảnh.
+5. Xem nhãn chất lượng: vùng đỏ cần khoanh lại hoặc bấm **Vẫn OCR**; nếu OCR còn hữu ích có thể chọn **Vẫn dùng vùng này**.
+6. Ghim ít nhất hai vùng và chọn **So sánh vùng đã ghim**.
+7. Bấm citation `[Vùng n]` để highlight polygon hoặc `[Slide n]` để mở slide ngữ cảnh.
 
 ## Python LangChain/LangGraph chatbot
 

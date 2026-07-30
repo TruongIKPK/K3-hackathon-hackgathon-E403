@@ -4,8 +4,10 @@
 import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ChatWidget } from "./components/chat-widget";
+import { assessRegionContent, assessRegionGeometry, isRegionUsable } from "./lib/region-quality";
 
 type Point = { x: number; y: number };
+type RegionQualityAssessment = ReturnType<typeof assessRegionGeometry>;
 
 export type SlideContext = {
   pageNumber: number;
@@ -29,6 +31,9 @@ export type SelectionRegion = {
   pageNumber: number;
   isPinned: boolean;
   isTextEdited?: boolean;
+  geometryQuality: RegionQualityAssessment;
+  quality: RegionQualityAssessment;
+  qualityOverride?: boolean;
 };
 
 const REGION_COLORS = [
@@ -102,8 +107,19 @@ export default function Home() {
 
   function togglePinRegion(id: string) {
     setRegions((prev) =>
-      prev.map((region) => (region.id === id ? { ...region, isPinned: !region.isPinned } : region)),
+      prev.map((region) =>
+        region.id === id && isRegionUsable(region) ? { ...region, isPinned: !region.isPinned } : region,
+      ),
     );
+  }
+
+  function retryRegion(region: SelectionRegion) {
+    tracePage(region.pageNumber);
+    deleteRegion(region.id);
+  }
+
+  function allowRegionDespiteWarning(id: string) {
+    updateRegion(id, { qualityOverride: true });
   }
 
   function tracePage(targetPage: number) {
@@ -415,7 +431,17 @@ export default function Home() {
     };
   }
 
-  async function parseRegionOCR(regionId: string, previewUrl: string) {
+  async function parseRegionOCR(
+    regionId: string,
+    previewUrl: string,
+    options?: { force?: boolean; geometryQuality?: RegionQualityAssessment; pageNumber?: number },
+  ) {
+    const currentRegion = regions.find((region) => region.id === regionId);
+    const geometryQuality = options?.geometryQuality ?? currentRegion?.geometryQuality;
+    const targetPage = options?.pageNumber ?? currentRegion?.pageNumber;
+    if (!geometryQuality || !targetPage) return;
+    if (geometryQuality.status === "blocked" && !options?.force && !currentRegion?.qualityOverride) return;
+
     setRegions((prev) =>
       prev.map((r) => (r.id === regionId ? { ...r, isParsing: true, parseError: "", parsedText: "" } : r))
     );
@@ -430,6 +456,8 @@ export default function Home() {
       const payload = (await response.json()) as { markdown?: string; error?: string };
       if (!response.ok) throw new Error(payload.error || "Không thể parse ảnh đã khoanh vùng.");
       const markdown = payload.markdown?.trim() || "";
+      const slideText = await extractSlideText(targetPage);
+      const quality = assessRegionContent(markdown, slideText, geometryQuality);
       if (!markdown) {
         setRegions((prev) =>
           prev.map((region) =>
@@ -438,6 +466,7 @@ export default function Home() {
               : region,
           ),
         );
+        updateRegion(regionId, { quality, qualityOverride: false, ...(quality.status === "blocked" ? { isPinned: false } : {}) });
         return;
       }
       setRegions((prev) =>
@@ -447,12 +476,20 @@ export default function Home() {
             : region,
         ),
       );
+      updateRegion(regionId, { quality, qualityOverride: false, ...(quality.status === "blocked" ? { isPinned: false } : {}) });
     } catch (parseFailure) {
       const errorMsg = parseFailure instanceof Error ? parseFailure.message : "Không thể parse ảnh đã khoanh vùng.";
+      const quality = assessRegionContent("", "", geometryQuality);
       setRegions((prev) =>
-        prev.map((r) => (r.id === regionId ? { ...r, parseError: errorMsg, isParsing: false } : r))
+        prev.map((r) => (r.id === regionId ? { ...r, parseError: errorMsg, isParsing: false, quality, qualityOverride: false, isPinned: false } : r))
       );
     }
+  }
+
+  function handleRegionTextChange(region: SelectionRegion, parsedText: string) {
+    const slideText = slideTextCacheRef.current.get(region.pageNumber) ?? "";
+    const quality = assessRegionContent(parsedText, slideText, region.geometryQuality);
+    updateRegion(region.id, { parsedText, quality, isTextEdited: true, parseError: "", isPinned: quality.status === "blocked" ? false : region.isPinned });
   }
 
   function finishDrawing(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -462,6 +499,7 @@ export default function Home() {
 
     if (currentPoints.length >= 3) {
       const cropped = cropRegion(currentPoints);
+      const geometryQuality = assessRegionGeometry(currentPoints);
       const regionNumber = nextRegionNumberRef.current;
       nextRegionNumberRef.current += 1;
       const color = REGION_COLORS[(regionNumber - 1) % REGION_COLORS.length];
@@ -476,11 +514,14 @@ export default function Home() {
         previewUrl: cropped?.url,
         previewWidth: cropped?.width,
         previewHeight: cropped?.height,
+        geometryQuality,
+        quality: geometryQuality,
+        qualityOverride: false,
       };
 
       setRegions((prev) => [...prev, newRegion]);
-      if (cropped?.url) {
-        void parseRegionOCR(newRegion.id, cropped.url);
+      if (cropped?.url && geometryQuality.status !== "blocked") {
+        void parseRegionOCR(newRegion.id, cropped.url, { geometryQuality, pageNumber, force: true });
       }
     }
     setCurrentPoints([]);
@@ -488,8 +529,8 @@ export default function Home() {
 
   function processAllRegions() {
     currentPageRegions.forEach((region) => {
-      if (region.previewUrl && !region.isParsing) {
-        void parseRegionOCR(region.id, region.previewUrl);
+      if (region.previewUrl && !region.isParsing && isRegionUsable(region)) {
+        void parseRegionOCR(region.id, region.previewUrl, { force: region.qualityOverride });
       }
     });
   }
@@ -575,12 +616,15 @@ export default function Home() {
                 <div
                   key={region.id}
                   id={`region-card-${region.id}`}
-                  className={`region-card${region.isPinned ? " is-pinned" : ""}${tracedRegionId === region.id ? " is-traced" : ""}`}
+                  className={`region-card quality-${region.quality.status}${region.isPinned ? " is-pinned" : ""}${tracedRegionId === region.id ? " is-traced" : ""}`}
                 >
                   <div className="region-card-header">
                     <div className="region-title">
                       <span className="region-color-dot" style={{ backgroundColor: region.color.stroke }} />
                       <span>{region.label}</span>
+                      <span className={`quality-pill ${region.qualityOverride ? "override" : region.quality.status}`}>
+                        {region.qualityOverride ? "D\u00f9ng c\u00f3 c\u1ea3nh b\u00e1o" : `${region.quality.score}% \u00b7 ${region.quality.title}`}
+                      </span>
                       {region.isPinned && <span className="region-pin-badge">📌 Đã ghim</span>}
                       <button type="button" className="region-page-button" onClick={() => traceRegion(region.id)}>
                         Trang {region.pageNumber}
@@ -593,6 +637,7 @@ export default function Home() {
                         onClick={() => togglePinRegion(region.id)}
                         title={region.isPinned ? "Bỏ ghim vùng" : "Ghim vùng để so sánh"}
                         aria-pressed={region.isPinned}
+                        disabled={!isRegionUsable(region)}
                       >
                         {region.isPinned ? "Bỏ ghim" : "📌 Ghim"}
                       </button>
@@ -608,10 +653,10 @@ export default function Home() {
                         className="region-action-btn parse-btn"
                         type="button"
                         disabled={region.isParsing}
-                        onClick={() => region.previewUrl && parseRegionOCR(region.id, region.previewUrl)}
+                        onClick={() => region.previewUrl && parseRegionOCR(region.id, region.previewUrl, { force: true })}
                         title="Chạy lại OCR"
                       >
-                        <Icon name="refresh" /> {region.isParsing ? "Parsing..." : "OCR"}
+                        <Icon name="refresh" /> {region.isParsing ? "Parsing..." : region.geometryQuality.status === "blocked" && !region.parsedText ? "V\u1eabn OCR" : "OCR"}
                       </button>
                       <button
                         className="region-action-btn"
@@ -635,6 +680,32 @@ export default function Home() {
                     <span>{region.previewWidth} × {region.previewHeight}px</span>
                   </div>
 
+                  <div className={`quality-panel ${region.qualityOverride ? "override" : region.quality.status}`} role={region.quality.status === "blocked" ? "alert" : "status"}>
+                    <div className="quality-panel-heading">
+                      <strong>{region.qualityOverride ? "\u0110ang d\u00f9ng theo x\u00e1c nh\u1eadn c\u1ee7a b\u1ea1n" : region.quality.title}</strong>
+                      <span>{"\u0110i\u1ec3m tin c\u1eady"} {region.quality.score}/100</span>
+                    </div>
+                    <p>{region.qualityOverride ? "AI s\u1ebd nh\u1eadn v\u00f9ng n\u00e0y d\u00f9 h\u1ec7 th\u1ed1ng c\u00f2n ph\u00e1t hi\u1ec7n r\u1ee7i ro." : region.quality.summary}</p>
+                    {region.quality.reasons.length > 0 && (
+                      <ul>{region.quality.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                    )}
+                    {region.quality.status === "blocked" && !region.qualityOverride && (
+                      <div className="quality-actions">
+                        <button type="button" onClick={() => retryRegion(region)}>{"Khoanh l\u1ea1i"}</button>
+                        {Boolean(region.parsedText?.trim()) && (
+                          <button type="button" className="use-anyway" onClick={() => allowRegionDespiteWarning(region.id)}>
+                            {"V\u1eabn d\u00f9ng v\u00f9ng n\u00e0y"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {region.qualityOverride && (
+                      <button type="button" className="quality-reset-button" onClick={() => updateRegion(region.id, { qualityOverride: false, isPinned: false })}>
+                        {"B\u1eadt l\u1ea1i b\u1ea3o v\u1ec7"}
+                      </button>
+                    )}
+                  </div>
+
                   <div className="parsed-output">
                     <div className="parsed-output-heading">
                       <h3>Ngữ cảnh OCR ({region.label})</h3>
@@ -644,7 +715,7 @@ export default function Home() {
                     <textarea
                       value={region.parsedText || ""}
                       disabled={region.isParsing}
-                      onChange={(event) => updateRegion(region.id, { parsedText: event.target.value, isTextEdited: true, parseError: "" })}
+                      onChange={(event) => handleRegionTextChange(region, event.target.value)}
                       placeholder={region.isParsing ? "Đang gửi ảnh vùng chọn tới LightOn OCR..." : "Text OCR sẽ hiển thị tại đây; bạn có thể sửa hoặc nhập thủ công trước khi hỏi."}
                       aria-label={`Chỉnh sửa text OCR của ${region.label}`}
                     />

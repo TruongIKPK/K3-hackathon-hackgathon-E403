@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { SelectionRegion, SlideContext } from "../page";
+import { isRegionUsable } from "../lib/region-quality";
 
 type Message = {
   id: string;
@@ -56,12 +57,14 @@ export function ChatWidget({
   }
 
   // Active regions to include in context
-  const explicitlySelectedRegions = regions.filter((region) => selectedRegionIds.includes(region.id));
+  const usableRegions = regions.filter(isRegionUsable);
+  const explicitlySelectedRegions = usableRegions.filter((region) => selectedRegionIds.includes(region.id));
   const activeContextRegions =
     selectedRegionIds.length > 0 && explicitlySelectedRegions.length > 0
       ? explicitlySelectedRegions
-      : regions;
-  const pinnedRegions = regions.filter((region) => region.isPinned);
+      : usableRegions;
+  const pinnedRegions = usableRegions.filter((region) => region.isPinned);
+  const blockedRegionCount = regions.length - usableRegions.length;
 
   async function sendMessage(customText?: string, contextOverride?: SelectionRegion[]) {
     const text = (customText || input).trim();
@@ -164,7 +167,7 @@ export function ChatWidget({
           >
             <span className="chat-trigger-icon">💬</span>
             <span className="chat-trigger-label">Hỏi theo vùng</span>
-            {regions.length > 0 && <span className="chat-trigger-badge">{regions.length}</span>}
+            {regions.length > 0 && <span className="chat-trigger-badge">{usableRegions.length}/{regions.length}</span>}
           </button>
         </div>
       )}
@@ -214,6 +217,7 @@ export function ChatWidget({
           {regions.length > 0 && (
             <div className="chat-context-bar">
               <span className="context-label">Ngữ cảnh:</span>
+              {blockedRegionCount > 0 && <span className="context-quality-count">{usableRegions.length} {"d\u00f9ng \u0111\u01b0\u1ee3c"}</span>}
               <div className="context-chips">
                 <button
                   type="button"
@@ -230,6 +234,8 @@ export function ChatWidget({
                       type="button"
                       className={isSelected ? "chip selected" : "chip"}
                       onClick={() => toggleRegionId(r.id)}
+                      disabled={!isRegionUsable(r)}
+                      title={!isRegionUsable(r) ? "V\u00f9ng b\u1ecb t\u1ea1m lo\u1ea1i do ch\u1ea5t l\u01b0\u1ee3ng th\u1ea5p" : undefined}
                       style={{
                         borderColor: r.color.stroke,
                         backgroundColor: isSelected ? r.color.fill : "transparent",
@@ -237,6 +243,7 @@ export function ChatWidget({
                     >
                       <span className="chip-dot" style={{ backgroundColor: r.color.stroke }} />
                       {r.isPinned ? "📌 " : ""}{r.label} · T{r.pageNumber}
+                      {!isRegionUsable(r) && <span aria-hidden="true">{"\u26a0\ufe0f"}</span>}
                     </button>
                   );
                 })}
@@ -247,6 +254,9 @@ export function ChatWidget({
             <div className="context-window-note" data-testid="context-window-note">
               Ngữ cảnh tự động: slide chứa vùng ± 1 slide lân cận; vùng khoanh luôn được ưu tiên.
             </div>
+          )}
+          {blockedRegionCount > 0 && (
+            <div className="context-quality-warning">{blockedRegionCount} {"v\u00f9ng ch\u1ea5t l\u01b0\u1ee3ng th\u1ea5p \u0111ang b\u1ecb lo\u1ea1i kh\u1ecfi AI."}</div>
           )}
 
           {/* Message History List */}

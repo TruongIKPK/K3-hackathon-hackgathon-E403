@@ -28,10 +28,11 @@ test("server renders the Freehand Slide Lab shell", async () => {
 });
 
 test("source contains the multi-region OCR and chatbot integration", async () => {
-  const [page, chatWidget, chatbotRoute] = await Promise.all([
+  const [page, chatWidget, chatbotRoute, qualityGuard] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/chat-widget.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/chatbot/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/region-quality.js", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /import\("pdfjs-dist"\)/);
@@ -47,6 +48,10 @@ test("source contains the multi-region OCR and chatbot integration", async () =>
   assert.match(page, /getTextContent/);
   assert.match(page, /resolveSlideContexts/);
   assert.match(page, /sourceRegionIds/);
+  assert.match(page, /assessRegionGeometry/);
+  assert.match(page, /quality-panel/);
+  assert.match(page, /qualityOverride/);
+  assert.match(chatWidget, /usableRegions/);
   assert.match(chatWidget, /ReactMarkdown/);
   assert.match(chatWidget, /selectedRegions/);
   assert.match(chatWidget, /comparePinnedRegions/);
@@ -58,6 +63,9 @@ test("source contains the multi-region OCR and chatbot integration", async () =>
   assert.match(chatWidget, /context-window-note/);
   assert.match(chatbotRoute, /BACKEND_CHATBOT_SERVICE_URL/);
   assert.match(chatbotRoute, /sourceRegionIds/);
+  assert.match(qualityGuard, /assessRegionContent/);
+  assert.match(qualityGuard, /selfIntersections/);
+  assert.match(qualityGuard, /isRegionUsable/);
   assert.doesNotMatch(chatbotRoute, /Mẫu phản hồi|Đã nhận câu hỏi/);
 });
 
