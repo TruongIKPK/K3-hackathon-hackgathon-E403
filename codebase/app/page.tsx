@@ -32,6 +32,9 @@ export default function Home() {
   const [points, setPoints] = useState<Point[]>([]);
   const [isClosed, setIsClosed] = useState(false);
   const [preview, setPreview] = useState<{ url: string; width: number; height: number } | null>(null);
+  const [parsedText, setParsedText] = useState("");
+  const [parseError, setParseError] = useState("");
+  const [isParsing, setIsParsing] = useState(false);
 
   const totalPages = pdf?.numPages ?? 0;
 
@@ -40,6 +43,8 @@ export default function Home() {
     setPoints([]);
     setIsClosed(false);
     setPreview(null);
+    setParsedText("");
+    setParseError("");
   }
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -171,6 +176,8 @@ export default function Home() {
     drawingRef.current = true;
     setIsClosed(false);
     setPreview(null);
+    setParsedText("");
+    setParseError("");
     setPoints([pointFromEvent(event)]);
   }
 
@@ -194,9 +201,33 @@ export default function Home() {
     });
   }
 
+  async function parseSelectionImage(dataUrl: string) {
+    setIsParsing(true);
+    setParseError("");
+    setParsedText("");
+    try {
+      const imageBlob = await (await fetch(dataUrl)).blob();
+      const formData = new FormData();
+      formData.append("file", imageBlob, "selection.png");
+      const response = await fetch("/api/parse-selection", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = (await response.json()) as { markdown?: string; error?: string };
+      if (!response.ok) throw new Error(payload.error || "Không thể parse ảnh đã khoanh vùng.");
+      setParsedText(payload.markdown?.trim() || "Không tìm thấy nội dung text trong ảnh đã chọn.");
+    } catch (parseFailure) {
+      setParseError(parseFailure instanceof Error ? parseFailure.message : "Không thể parse ảnh đã khoanh vùng.");
+    } finally {
+      setIsParsing(false);
+    }
+  }
+
   function processSelection() {
     const source = canvasRef.current;
     if (!source || !isClosed || points.length < 3) return;
+    setParseError("");
+    setParsedText("");
 
     const pixelPoints = points.map((point) => ({
       x: point.x * source.width,
@@ -227,11 +258,13 @@ export default function Home() {
     context.drawImage(source, 0, 0);
     context.restore();
 
+    const url = output.toDataURL("image/png");
     setPreview({
-      url: output.toDataURL("image/png"),
+      url,
       width: output.width,
       height: output.height,
     });
+    void parseSelectionImage(url);
   }
 
   const chooseFile = () => fileInputRef.current?.click();
@@ -258,7 +291,7 @@ export default function Home() {
               <button className="tool-button" type="button" disabled={!hasSelection} onClick={clearSelection} data-testid="clear-selection"><Icon name="trash" />Xóa vùng</button>
             </div>
             <div className="file-status" title={fileName || "Chưa có tài liệu"}><span className={pdf ? "status-dot ready" : "status-dot"} />{fileName || "Chưa có tài liệu"}</div>
-            <button className="process-button" type="button" disabled={!hasSelection} onClick={processSelection} data-testid="process-button"><Icon name="play" />Process</button>
+            <button className="process-button" type="button" disabled={!hasSelection || isParsing} onClick={processSelection} data-testid="process-button"><Icon name="play" />{isParsing ? "Parsing..." : "Process"}</button>
           </div>
 
           <div className="slide-frame">
@@ -309,6 +342,22 @@ export default function Home() {
                 <img src={preview.url} alt="Ảnh cắt từ vùng khoanh tự do" data-testid="preview-image" />
               </div>
               <div className="preview-caption"><span>PNG · mặt nạ freehand</span><span>{preview.width} × {preview.height}px</span></div>
+              <div className="parsed-output">
+                <div className="parsed-output-heading">
+                  <h3>Text sau khi parse</h3>
+                  {isParsing && <span><span className="spinner small" />Đang parse</span>}
+                </div>
+                {parseError ? (
+                  <p className="parse-error" role="alert">{parseError}</p>
+                ) : (
+                  <textarea
+                    readOnly
+                    value={parsedText}
+                    placeholder={isParsing ? "Đang gửi ảnh đã khoanh vùng tới LightOn..." : "Text parse sẽ hiển thị tại đây."}
+                    aria-label="Text sau khi parse từ ảnh đã khoanh vùng"
+                  />
+                )}
+              </div>
             </div>
           ) : (
             <div className="preview-empty">
