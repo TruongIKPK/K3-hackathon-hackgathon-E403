@@ -52,9 +52,12 @@ class SelectedRegion(BaseModel):
     def validate_preview_url(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        if not value.startswith("data:image/"):
-            raise ValueError("previewUrl phải là image Data URL.")
-        return value
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if not (normalized.startswith("data:image/") or normalized.startswith("http://") or normalized.startswith("https://")):
+            raise ValueError("previewUrl phải là image Data URL hoặc HTTP URL.")
+        return normalized
 
 
 class SlideContext(BaseModel):

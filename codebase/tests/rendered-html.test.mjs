@@ -87,7 +87,7 @@ test("chatbot proxy forwards the documented contract to Python", async () => {
           label: "Vùng 1",
           pageNumber: 3,
           parsedText: "",
-          previewUrl: "data:image/png;base64,aGVsbG8=",
+          previewUrl: "",
         },
       ],
       slideContexts: [

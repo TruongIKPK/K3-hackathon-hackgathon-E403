@@ -272,7 +272,12 @@ export function assessRegionContent(markdown, slideText, geometryAssessment) {
   return result("good", score, [], geometryAssessment.metrics, "content");
 }
 
-/** @param {{ quality?: RegionQualityAssessment; qualityOverride?: boolean }} region */
+/** @param {{ quality?: RegionQualityAssessment; qualityOverride?: boolean; previewUrl?: string; parsedText?: string }} region */
 export function isRegionUsable(region) {
-  return region.qualityOverride === true || region.quality?.status !== "blocked";
+  return (
+    region.qualityOverride === true ||
+    region.quality?.status !== "blocked" ||
+    Boolean(region.previewUrl && region.previewUrl.trim()) ||
+    Boolean(region.parsedText && region.parsedText.trim())
+  );
 }
