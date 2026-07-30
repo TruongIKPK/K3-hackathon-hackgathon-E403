@@ -199,7 +199,7 @@ export function NotebookPanel({
               <div className="gdoc-empty-illustration">📄</div>
               <h3>Trang tài liệu đang trống</h3>
               <p>
-                Rê chuột lên bất kỳ vùng khoanh nào trên slide để chọn <strong>Dán chữ</strong> hoặc <strong>Dán hình</strong> trực tiếp vào đây mà không bị dính mã base64!
+                Rê chuột lên bất kỳ vùng khoanh nào trên slide để chọn <strong>Dán chữ</strong> hoặc <strong>Dán hình</strong> trực tiếp vào đây!
               </p>
               <button
                 type="button"
