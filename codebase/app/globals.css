@@ -60,6 +60,7 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 @keyframes spin { to { transform:rotate(360deg); } }
 
 .selection-canvas { position:absolute; inset:0; z-index:2; display:block; cursor:crosshair; touch-action:none; }
+.selection-canvas.eraser-mode { cursor:cell; }
 .canvas-stack:has(.selection-canvas) { overflow:hidden; }
 
 .preview-badge.ready { color:#11643d; background:#e5f6ed; }
