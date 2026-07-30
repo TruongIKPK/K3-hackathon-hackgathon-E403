@@ -7,6 +7,13 @@ import { ChatWidget } from "./components/chat-widget";
 
 type Point = { x: number; y: number };
 
+export type SlideContext = {
+  pageNumber: number;
+  text: string;
+  sourceRegionIds: string[];
+  isSelectedPage: boolean;
+};
+
 export type SelectionRegion = {
   id: string;
   label: string;
@@ -19,6 +26,9 @@ export type SelectionRegion = {
   parsedText?: string;
   parseError?: string;
   isParsing?: boolean;
+  pageNumber: number;
+  isPinned: boolean;
+  isTextEdited?: boolean;
 };
 
 const REGION_COLORS = [
@@ -49,6 +59,8 @@ export default function Home() {
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const drawingRef = useRef(false);
+  const nextRegionNumberRef = useRef(1);
+  const slideTextCacheRef = useRef<Map<number, string>>(new Map());
 
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [fileName, setFileName] = useState("");
@@ -59,18 +71,114 @@ export default function Home() {
   // Multi-region states
   const [regions, setRegions] = useState<SelectionRegion[]>([]);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
+  const [tracedRegionId, setTracedRegionId] = useState<string | null>(null);
+  const [renderVersion, setRenderVersion] = useState(0);
 
   const totalPages = pdf?.numPages ?? 0;
-  const isAnyParsing = regions.some((r) => r.isParsing);
+  const currentPageRegions = regions.filter((region) => region.pageNumber === pageNumber);
+  const pinnedRegions = regions.filter((region) => region.isPinned);
+  const isAnyParsing = currentPageRegions.some((region) => region.isParsing);
 
-  function clearAllSelections() {
+  function cancelCurrentDrawing() {
     drawingRef.current = false;
     setCurrentPoints([]);
+  }
+
+  function clearAllSelections() {
+    cancelCurrentDrawing();
+    setTracedRegionId(null);
+    nextRegionNumberRef.current = 1;
     setRegions([]);
   }
 
   function deleteRegion(id: string) {
-    setRegions((prev) => prev.filter((r) => r.id !== id));
+    setRegions((prev) => prev.filter((region) => region.id !== id));
+    setTracedRegionId((current) => (current === id ? null : current));
+  }
+
+  function updateRegion(id: string, patch: Partial<SelectionRegion>) {
+    setRegions((prev) => prev.map((region) => (region.id === id ? { ...region, ...patch } : region)));
+  }
+
+  function togglePinRegion(id: string) {
+    setRegions((prev) =>
+      prev.map((region) => (region.id === id ? { ...region, isPinned: !region.isPinned } : region)),
+    );
+  }
+
+  function tracePage(targetPage: number) {
+    cancelCurrentDrawing();
+    setTracedRegionId(null);
+    setPageNumber(Math.max(1, Math.min(totalPages, targetPage)));
+    window.requestAnimationFrame(() => stageRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }
+
+  function traceRegion(id: string) {
+    const region = regions.find((candidate) => candidate.id === id);
+    if (!region) return;
+    tracePage(region.pageNumber);
+    setTracedRegionId(id);
+  }
+
+  async function extractSlideText(targetPage: number) {
+    const cached = slideTextCacheRef.current.get(targetPage);
+    if (cached !== undefined) return cached;
+    if (!pdf || targetPage < 1 || targetPage > totalPages) return "";
+
+    try {
+      const slide = await pdf.getPage(targetPage);
+      const textContent = await slide.getTextContent();
+      const text = textContent.items
+        .map((item) =>
+          typeof item === "object" && item !== null && "str" in item
+            ? String((item as { str: unknown }).str)
+            : "",
+        )
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 12_000);
+      slideTextCacheRef.current.set(targetPage, text);
+      return text;
+    } catch {
+      slideTextCacheRef.current.set(targetPage, "");
+      return "";
+    }
+  }
+
+  async function resolveSlideContexts(contextRegions: SelectionRegion[]): Promise<SlideContext[]> {
+    const windowByPage = new Map<
+      number,
+      { pageNumber: number; sourceRegionIds: Set<string>; isSelectedPage: boolean }
+    >();
+
+    for (const region of contextRegions) {
+      for (const offset of [0, -1, 1]) {
+        const targetPage = region.pageNumber + offset;
+        if (targetPage < 1 || targetPage > totalPages) continue;
+        const existing = windowByPage.get(targetPage) ?? {
+          pageNumber: targetPage,
+          sourceRegionIds: new Set<string>(),
+          isSelectedPage: false,
+        };
+        existing.sourceRegionIds.add(region.id);
+        existing.isSelectedPage ||= offset === 0;
+        windowByPage.set(targetPage, existing);
+      }
+    }
+
+    const prioritized = [...windowByPage.values()]
+      .sort((left, right) => Number(right.isSelectedPage) - Number(left.isSelectedPage) || left.pageNumber - right.pageNumber)
+      .slice(0, 18);
+    const resolved = await Promise.all(
+      prioritized.map(async (entry) => ({
+        pageNumber: entry.pageNumber,
+        text: await extractSlideText(entry.pageNumber),
+        sourceRegionIds: [...entry.sourceRegionIds],
+        isSelectedPage: entry.isSelectedPage,
+      })),
+    );
+    return resolved.sort((left, right) => left.pageNumber - right.pageNumber);
   }
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -85,6 +193,7 @@ export default function Home() {
     setIsLoading(true);
     setError("");
     clearAllSelections();
+    slideTextCacheRef.current.clear();
     try {
       const pdfjs = await import("pdfjs-dist");
       pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -148,6 +257,7 @@ export default function Home() {
           transform: dpr === 1 ? undefined : [dpr, 0, 0, dpr, 0, 0],
         });
         await renderTask.promise;
+        if (!cancelled) setRenderVersion((version) => version + 1);
       } catch (renderError) {
         if (!cancelled && (renderError as { name?: string }).name !== "RenderingCancelledException") {
           setError("Không thể render trang PDF này.");
@@ -172,8 +282,8 @@ export default function Home() {
     if (!context) return;
     context.clearRect(0, 0, overlay.width, overlay.height);
 
-    // 1. Render all saved regions
-    regions.forEach((region, index) => {
+    // 1. Render only the regions belonging to the visible PDF page.
+    regions.filter((region) => region.pageNumber === pageNumber).forEach((region) => {
       if (region.points.length < 2) return;
       context.save();
       context.beginPath();
@@ -191,6 +301,13 @@ export default function Home() {
       context.stroke();
       context.fillStyle = region.color.fill;
       context.fill();
+      if (region.id === tracedRegionId) {
+        context.strokeStyle = "#facc15";
+        context.lineWidth = Math.max(7, overlay.width / 120);
+        context.shadowColor = "rgba(250, 204, 21, 0.85)";
+        context.shadowBlur = 14;
+        context.stroke();
+      }
 
       // Render Region Badge Tag (#1, #2...) near starting point
       const startX = region.points[0].x * overlay.width;
@@ -210,7 +327,8 @@ export default function Home() {
       context.font = "bold 11px Inter, sans-serif";
       context.textAlign = "center";
       context.textBaseline = "middle";
-      context.fillText(`${index + 1}`, startX, startY + 0.5);
+      const badgeLabel = region.label.replace(/\D/g, "") || "•";
+      context.fillText(badgeLabel, startX, startY + 0.5);
       context.restore();
     });
 
@@ -229,7 +347,7 @@ export default function Home() {
       context.stroke();
       context.restore();
     }
-  }, [regions, currentPoints]);
+  }, [regions, currentPoints, pageNumber, tracedRegionId, renderVersion]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLCanvasElement>): Point {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -242,6 +360,7 @@ export default function Home() {
   function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (isLoading) return;
     event.currentTarget.setPointerCapture(event.pointerId);
+    setTracedRegionId(null);
     drawingRef.current = true;
     setCurrentPoints([pointFromEvent(event)]);
   }
@@ -310,9 +429,23 @@ export default function Home() {
       });
       const payload = (await response.json()) as { markdown?: string; error?: string };
       if (!response.ok) throw new Error(payload.error || "Không thể parse ảnh đã khoanh vùng.");
-      const markdown = payload.markdown?.trim() || "Không tìm thấy nội dung text trong ảnh đã chọn.";
+      const markdown = payload.markdown?.trim() || "";
+      if (!markdown) {
+        setRegions((prev) =>
+          prev.map((region) =>
+            region.id === regionId
+              ? { ...region, parsedText: "", parseError: "Không tìm thấy nội dung text trong vùng này.", isParsing: false }
+              : region,
+          ),
+        );
+        return;
+      }
       setRegions((prev) =>
-        prev.map((r) => (r.id === regionId ? { ...r, parsedText: markdown, isParsing: false } : r))
+        prev.map((region) =>
+          region.id === regionId
+            ? { ...region, parsedText: markdown, parseError: "", isParsing: false, isTextEdited: false }
+            : region,
+        ),
       );
     } catch (parseFailure) {
       const errorMsg = parseFailure instanceof Error ? parseFailure.message : "Không thể parse ảnh đã khoanh vùng.";
@@ -329,14 +462,17 @@ export default function Home() {
 
     if (currentPoints.length >= 3) {
       const cropped = cropRegion(currentPoints);
-      const index = regions.length;
-      const color = REGION_COLORS[index % REGION_COLORS.length];
+      const regionNumber = nextRegionNumberRef.current;
+      nextRegionNumberRef.current += 1;
+      const color = REGION_COLORS[(regionNumber - 1) % REGION_COLORS.length];
       const newRegion: SelectionRegion = {
         id: `region-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        label: `Vùng ${index + 1}`,
+        label: `Vùng ${regionNumber}`,
         color,
         points: currentPoints,
         isClosed: true,
+        pageNumber,
+        isPinned: false,
         previewUrl: cropped?.url,
         previewWidth: cropped?.width,
         previewHeight: cropped?.height,
@@ -351,7 +487,7 @@ export default function Home() {
   }
 
   function processAllRegions() {
-    regions.forEach((region) => {
+    currentPageRegions.forEach((region) => {
       if (region.previewUrl && !region.isParsing) {
         void parseRegionOCR(region.id, region.previewUrl);
       }
@@ -360,10 +496,12 @@ export default function Home() {
 
   const chooseFile = () => fileInputRef.current?.click();
   const goToPage = (nextPage: number) => {
-    clearAllSelections();
+    cancelCurrentDrawing();
+    setTracedRegionId(null);
     setPageNumber(Math.max(1, Math.min(totalPages, nextPage)));
   };
   const hasRegions = regions.length > 0;
+  const hasCurrentPageRegions = currentPageRegions.length > 0;
 
   return (
     <main className="app-shell">
@@ -378,11 +516,11 @@ export default function Home() {
         <div className="document-column">
           <div className="toolbar" aria-label="Công cụ khoanh vùng">
             <div className="tool-group">
-              <button className="tool-button active" type="button"><Icon name="lasso" />Khoanh vùng ({regions.length})</button>
+              <button className="tool-button active" type="button"><Icon name="lasso" />Trang này {currentPageRegions.length} · Tổng {regions.length}</button>
               <button className="tool-button" type="button" disabled={!hasRegions && currentPoints.length === 0} onClick={clearAllSelections} data-testid="clear-selection"><Icon name="trash" />Xóa tất cả vùng</button>
             </div>
             <div className="file-status" title={fileName || "Chưa có tài liệu"}><span className={pdf ? "status-dot ready" : "status-dot"} />{fileName || "Chưa có tài liệu"}</div>
-            <button className="process-button" type="button" disabled={!hasRegions || isAnyParsing} onClick={processAllRegions} data-testid="process-button"><Icon name="play" />{isAnyParsing ? "Parsing OCR..." : "Process OCR"}</button>
+            <button className="process-button" type="button" disabled={!hasCurrentPageRegions || isAnyParsing} onClick={processAllRegions} data-testid="process-button"><Icon name="play" />{isAnyParsing ? "Parsing OCR..." : "Process trang này"}</button>
           </div>
 
           <div className="slide-frame">
@@ -407,8 +545,8 @@ export default function Home() {
                     onPointerUp={finishDrawing}
                     onPointerCancel={finishDrawing}
                     data-testid="selection-canvas"
-                    data-points={currentPoints.length || (regions[regions.length - 1]?.points.length ?? 0)}
-                    data-closed={hasRegions || currentPoints.length >= 3}
+                    data-points={currentPoints.length || (currentPageRegions[currentPageRegions.length - 1]?.points.length ?? 0)}
+                    data-closed={hasCurrentPageRegions || currentPoints.length >= 3}
                     aria-label="Vùng vẽ khoanh tự do đa phân vùng"
                   />
                 </div>
@@ -428,19 +566,44 @@ export default function Home() {
         <aside className="preview-panel">
           <div className="preview-heading">
             <div><p className="eyebrow">KẾT QUẢ PHÂN TÍCH</p><h2>Danh sách phân vùng ({regions.length})</h2></div>
-            <span className={hasRegions ? "preview-badge ready" : "preview-badge"}>{hasRegions ? `${regions.length} Vùng` : "Preview"}</span>
+            <span className={hasRegions ? "preview-badge ready" : "preview-badge"}>{hasRegions ? `${regions.length} vùng · ${pinnedRegions.length} ghim` : "Preview"}</span>
           </div>
 
           {hasRegions ? (
             <div className="region-list" data-testid="preview-result">
               {regions.map((region) => (
-                <div key={region.id} className="region-card">
+                <div
+                  key={region.id}
+                  id={`region-card-${region.id}`}
+                  className={`region-card${region.isPinned ? " is-pinned" : ""}${tracedRegionId === region.id ? " is-traced" : ""}`}
+                >
                   <div className="region-card-header">
                     <div className="region-title">
                       <span className="region-color-dot" style={{ backgroundColor: region.color.stroke }} />
                       <span>{region.label}</span>
+                      {region.isPinned && <span className="region-pin-badge">📌 Đã ghim</span>}
+                      <button type="button" className="region-page-button" onClick={() => traceRegion(region.id)}>
+                        Trang {region.pageNumber}
+                      </button>
                     </div>
                     <div className="region-card-actions">
+                      <button
+                        className={`region-action-btn pin-btn${region.isPinned ? " active" : ""}`}
+                        type="button"
+                        onClick={() => togglePinRegion(region.id)}
+                        title={region.isPinned ? "Bỏ ghim vùng" : "Ghim vùng để so sánh"}
+                        aria-pressed={region.isPinned}
+                      >
+                        {region.isPinned ? "Bỏ ghim" : "📌 Ghim"}
+                      </button>
+                      <button
+                        className="region-action-btn locate-btn"
+                        type="button"
+                        onClick={() => traceRegion(region.id)}
+                        title="Hiện vùng trên slide"
+                      >
+                        Xem
+                      </button>
                       <button
                         className="region-action-btn parse-btn"
                         type="button"
@@ -468,25 +631,23 @@ export default function Home() {
                   )}
 
                   <div className="preview-caption">
-                    <span>PNG · {region.label}</span>
+                    <span>PNG · {region.label} · Trang {region.pageNumber}</span>
                     <span>{region.previewWidth} × {region.previewHeight}px</span>
                   </div>
 
                   <div className="parsed-output">
                     <div className="parsed-output-heading">
-                      <h3>Phân tích OCR ({region.label})</h3>
-                      {region.isParsing && <span><span className="spinner small" />Đang parse</span>}
+                      <h3>Ngữ cảnh OCR ({region.label})</h3>
+                      {region.isParsing ? <span><span className="spinner small" />Đang parse</span> : region.isTextEdited ? <span>Đã chỉnh sửa</span> : null}
                     </div>
-                    {region.parseError ? (
-                      <p className="parse-error" role="alert">{region.parseError}</p>
-                    ) : (
-                      <textarea
-                        readOnly
-                        value={region.parsedText || ""}
-                        placeholder={region.isParsing ? "Đang gửi ảnh vùng chọn tới LightOn OCR..." : "Text OCR sẽ hiển thị tại đây."}
-                        aria-label={`Text sau khi parse từ ${region.label}`}
-                      />
-                    )}
+                    {region.parseError && <p className="parse-error" role="alert">{region.parseError}</p>}
+                    <textarea
+                      value={region.parsedText || ""}
+                      disabled={region.isParsing}
+                      onChange={(event) => updateRegion(region.id, { parsedText: event.target.value, isTextEdited: true, parseError: "" })}
+                      placeholder={region.isParsing ? "Đang gửi ảnh vùng chọn tới LightOn OCR..." : "Text OCR sẽ hiển thị tại đây; bạn có thể sửa hoặc nhập thủ công trước khi hỏi."}
+                      aria-label={`Chỉnh sửa text OCR của ${region.label}`}
+                    />
                   </div>
                 </div>
               ))}
@@ -506,7 +667,12 @@ export default function Home() {
         </aside>
       </section>
 
-      <ChatWidget regions={regions} />
+      <ChatWidget
+        regions={regions}
+        onTraceRegion={traceRegion}
+        onTracePage={tracePage}
+        resolveSlideContexts={resolveSlideContexts}
+      />
     </main>
   );
 }

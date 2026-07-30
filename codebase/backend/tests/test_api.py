@@ -29,9 +29,30 @@ def valid_payload() -> dict:
             {
                 "id": "region-1",
                 "label": "Vùng 1",
+                "pageNumber": 3,
                 "parsedText": "Agent có thể quan sát, lập kế hoạch và sử dụng công cụ.",
                 "previewUrl": "data:image/png;base64,aGVsbG8=",
             }
+        ],
+        "slideContexts": [
+            {
+                "pageNumber": 2,
+                "text": "Slide trước giới thiệu kiến trúc agent.",
+                "sourceRegionIds": ["region-1"],
+                "isSelectedPage": False,
+            },
+            {
+                "pageNumber": 3,
+                "text": "Slide chứa vùng mô tả vòng lặp quan sát, lập kế hoạch và hành động.",
+                "sourceRegionIds": ["region-1"],
+                "isSelectedPage": True,
+            },
+            {
+                "pageNumber": 4,
+                "text": "Slide sau đưa ra ví dụ sử dụng công cụ.",
+                "sourceRegionIds": ["region-1"],
+                "isSelectedPage": False,
+            },
         ],
     }
 
@@ -60,17 +81,36 @@ def test_returns_guardrail_clarification_without_ocr() -> None:
 
 
 def test_success_response_matches_api_contract(monkeypatch) -> None:
-    fake_model = RunnableLambda(
-        lambda _prompt: AIMessage(
-            content="### Giải thích\nAgent có thể lập kế hoạch và dùng công cụ. [Vùng 1]"
+    captured: dict[str, str] = {}
+
+    def fake_answer(prompt) -> AIMessage:
+        captured["prompt"] = prompt.to_string()
+        return AIMessage(
+            content=(
+                "### Giải thích\nAgent có thể lập kế hoạch và dùng công cụ. "
+                "[Vùng 1] Ngữ cảnh được mở rộng ở slide chứa vùng. [Slide 3]"
+            )
         )
-    )
+
+    fake_model = RunnableLambda(fake_answer)
     monkeypatch.setattr(agent_module, "get_chat_model", lambda: fake_model)
 
     response = client.post("/api/chatbot", json=valid_payload())
     assert response.status_code == 200
     body = response.json()
     assert body["role"] == "assistant"
-    assert body["content"].endswith("[Vùng 1]")
+    assert body["content"].endswith("[Slide 3]")
+    assert "Slide 2" in captured["prompt"]
+    assert "Slide 3" in captured["prompt"]
+    assert "Slide 4" in captured["prompt"]
+    assert "slide trước Vùng 1" in captured["prompt"]
     assert set(body) == {"role", "content", "timestamp"}
     datetime.fromisoformat(body["timestamp"].replace("Z", "+00:00"))
+
+
+def test_rejects_slide_context_with_unknown_region() -> None:
+    payload = valid_payload()
+    payload["slideContexts"][0]["sourceRegionIds"] = ["missing-region"]
+    response = client.post("/api/chatbot", json=payload)
+    assert response.status_code == 422
+    assert set(response.json()) == {"error"}

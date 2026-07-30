@@ -11,13 +11,22 @@ type ChatMessage = {
 type SelectedRegion = {
   id: string;
   label: string;
+  pageNumber?: number;
   parsedText?: string;
   previewUrl?: string;
+};
+
+type SlideContext = {
+  pageNumber: number;
+  text: string;
+  sourceRegionIds: string[];
+  isSelectedPage: boolean;
 };
 
 type ChatbotPayload = {
   messages: ChatMessage[];
   selectedRegions?: SelectedRegion[];
+  slideContexts?: SlideContext[];
 };
 
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000/api/chatbot";
@@ -41,18 +50,46 @@ function validatePayload(value: unknown): value is ChatbotPayload {
   );
   if (!messagesValid) return false;
 
-  if (value.selectedRegions === undefined) return true;
-  if (!Array.isArray(value.selectedRegions)) return false;
+  if (value.selectedRegions !== undefined) {
+    if (!Array.isArray(value.selectedRegions) || value.selectedRegions.length > 12) return false;
+    const regionsValid = value.selectedRegions.every(
+      (region) =>
+        isRecord(region) &&
+        typeof region.id === "string" &&
+        region.id.trim().length > 0 &&
+        typeof region.label === "string" &&
+        region.label.trim().length > 0 &&
+        (region.pageNumber === undefined ||
+          (typeof region.pageNumber === "number" && Number.isInteger(region.pageNumber) && region.pageNumber > 0)) &&
+        (region.parsedText === undefined || typeof region.parsedText === "string") &&
+        (region.previewUrl === undefined || typeof region.previewUrl === "string"),
+    );
+    if (!regionsValid) return false;
+  }
 
-  return value.selectedRegions.every(
-    (region) =>
-      isRecord(region) &&
-      typeof region.id === "string" &&
-      region.id.trim().length > 0 &&
-      typeof region.label === "string" &&
-      region.label.trim().length > 0 &&
-      (region.parsedText === undefined || typeof region.parsedText === "string") &&
-      (region.previewUrl === undefined || typeof region.previewUrl === "string"),
+  if (value.slideContexts === undefined) return true;
+  if (!Array.isArray(value.slideContexts) || value.slideContexts.length > 18) return false;
+  const selectedRegionIds = new Set(
+    Array.isArray(value.selectedRegions)
+      ? value.selectedRegions
+          .filter(isRecord)
+          .map((region) => region.id)
+          .filter((id): id is string => typeof id === "string")
+      : [],
+  );
+
+  return value.slideContexts.every(
+    (slide) =>
+      isRecord(slide) &&
+      typeof slide.pageNumber === "number" &&
+      Number.isInteger(slide.pageNumber) &&
+      slide.pageNumber > 0 &&
+      typeof slide.text === "string" &&
+      typeof slide.isSelectedPage === "boolean" &&
+      Array.isArray(slide.sourceRegionIds) &&
+      slide.sourceRegionIds.every(
+        (regionId) => typeof regionId === "string" && selectedRegionIds.has(regionId),
+      ),
   );
 }
 

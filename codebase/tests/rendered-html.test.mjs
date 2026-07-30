@@ -38,10 +38,26 @@ test("source contains the multi-region OCR and chatbot integration", async () =>
   assert.match(page, /onPointerDown=\{handlePointerDown\}/);
   assert.match(page, /context\.clip\(\)/);
   assert.match(page, /parseRegionOCR/);
-  assert.match(page, /<ChatWidget regions=\{regions\}/);
+  assert.match(page, /regions=\{regions\}/);
+  assert.match(page, /pageNumber: number/);
+  assert.match(page, /isPinned: boolean/);
+  assert.match(page, /togglePinRegion/);
+  assert.match(page, /onTraceRegion=\{traceRegion\}/);
+  assert.match(page, /region\.pageNumber === pageNumber/);
+  assert.match(page, /getTextContent/);
+  assert.match(page, /resolveSlideContexts/);
+  assert.match(page, /sourceRegionIds/);
   assert.match(chatWidget, /ReactMarkdown/);
   assert.match(chatWidget, /selectedRegions/);
+  assert.match(chatWidget, /comparePinnedRegions/);
+  assert.match(chatWidget, /contextOverride/);
+  assert.match(chatWidget, /addCitationLinks/);
+  assert.match(chatWidget, /#source-/);
+  assert.match(chatWidget, /#slide-/);
+  assert.match(chatWidget, /slideContexts/);
+  assert.match(chatWidget, /context-window-note/);
   assert.match(chatbotRoute, /BACKEND_CHATBOT_SERVICE_URL/);
+  assert.match(chatbotRoute, /sourceRegionIds/);
   assert.doesNotMatch(chatbotRoute, /Mẫu phản hồi|Đã nhận câu hỏi/);
 });
 
@@ -58,8 +74,29 @@ test("chatbot proxy forwards the documented contract to Python", async () => {
         {
           id: "region-1",
           label: "Vùng 1",
+          pageNumber: 3,
           parsedText: "",
           previewUrl: "data:image/png;base64,aGVsbG8=",
+        },
+      ],
+      slideContexts: [
+        {
+          pageNumber: 2,
+          text: "Slide trước giới thiệu kiến trúc agent.",
+          sourceRegionIds: ["region-1"],
+          isSelectedPage: false,
+        },
+        {
+          pageNumber: 3,
+          text: "Slide chứa vùng trình bày vòng lặp agent.",
+          sourceRegionIds: ["region-1"],
+          isSelectedPage: true,
+        },
+        {
+          pageNumber: 4,
+          text: "Slide sau đưa ra ví dụ.",
+          sourceRegionIds: ["region-1"],
+          isSelectedPage: false,
         },
       ],
     }),

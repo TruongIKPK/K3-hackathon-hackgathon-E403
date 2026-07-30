@@ -6,8 +6,9 @@ Python service implementing the exact `POST /api/chatbot` contract used by the V
 
 - FastAPI request/response validation.
 - LangGraph workflow: context guardrail → LangChain answer → output guardrail.
-- Grounded system prompt using `selectedRegions[].parsedText`.
-- No RAG, persistence or vision analysis in this baseline.
+- Grounded system prompt using prioritized `selectedRegions[].parsedText` plus deduplicated `slideContexts` for the selected page and its `-1/+1` neighbors.
+- Source-aware citations: `[Vùng n]` for freehand evidence and `[Slide n]` for contextual evidence.
+- No vector RAG, persistence or vision analysis in this baseline; slide text is extracted locally from the PDF text layer.
 - `previewUrl` is accepted for API compatibility but is not sent to the text-only model.
 
 ## Local setup

@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import type { SelectionRegion } from "../page";
+import type { SelectionRegion, SlideContext } from "../page";
 
 type Message = {
   id: string;
@@ -10,7 +10,31 @@ type Message = {
   content: string;
 };
 
-export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function addCitationLinks(content: string, regions: SelectionRegion[]) {
+  const regionLinkedContent = regions.reduce((linkedContent, region) => {
+    const citation = new RegExp(`\\[${escapeRegExp(region.label)}\\](?!\\()`, "g");
+    return linkedContent.replace(citation, `[${region.label}](#source-${region.id})`);
+  }, content);
+  return regionLinkedContent.replace(/\[Slide\s+(\d+)\](?!\()/gi, (_match, page: string) =>
+    `[Slide ${page}](#slide-${page})`,
+  );
+}
+
+export function ChatWidget({
+  regions,
+  onTraceRegion,
+  onTracePage,
+  resolveSlideContexts,
+}: {
+  regions: SelectionRegion[];
+  onTraceRegion: (regionId: string) => void;
+  onTracePage: (pageNumber: number) => void;
+  resolveSlideContexts: (regions: SelectionRegion[]) => Promise<SlideContext[]>;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -20,7 +44,7 @@ export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
       id: "init-1",
       role: "assistant",
       content:
-        "Xin chào! Tôi là **VLearn AI Assistant**. Hãy khoanh các vùng trên slide và đặt câu hỏi, tôi sẽ giúp bạn giải thích, tóm tắt hoặc tạo câu hỏi ôn tập!",
+        "Xin chào! Tôi là **VLearn AI Assistant**. Khi bạn hỏi theo vùng, tôi sẽ dùng vùng khoanh cùng ngữ cảnh slide chứa vùng và hai slide lân cận.",
     },
   ]);
 
@@ -32,15 +56,18 @@ export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
   }
 
   // Active regions to include in context
+  const explicitlySelectedRegions = regions.filter((region) => selectedRegionIds.includes(region.id));
   const activeContextRegions =
-    selectedRegionIds.length > 0
-      ? regions.filter((r) => selectedRegionIds.includes(r.id))
+    selectedRegionIds.length > 0 && explicitlySelectedRegions.length > 0
+      ? explicitlySelectedRegions
       : regions;
+  const pinnedRegions = regions.filter((region) => region.isPinned);
 
-  async function sendMessage(customText?: string) {
+  async function sendMessage(customText?: string, contextOverride?: SelectionRegion[]) {
     const text = (customText || input).trim();
     if (!text || isLoading) return;
 
+    const contextRegions = contextOverride ?? activeContextRegions;
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -52,17 +79,20 @@ export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
     setIsLoading(true);
 
     try {
+      const slideContexts = await resolveSlideContexts(contextRegions);
       const response = await fetch("/api/chatbot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: [...messages, userMessage],
-          selectedRegions: activeContextRegions.map((r) => ({
+          selectedRegions: contextRegions.map((r) => ({
             id: r.id,
             label: r.label,
+            pageNumber: r.pageNumber,
             parsedText: r.parsedText,
             previewUrl: r.previewUrl,
           })),
+          slideContexts,
         }),
       });
 
@@ -99,21 +129,44 @@ export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
     void sendMessage(promptText);
   }
 
+  function comparePinnedRegions() {
+    if (pinnedRegions.length < 2 || isLoading) return;
+    const labels = pinnedRegions.map((region) => `${region.label} (trang ${region.pageNumber})`).join(", ");
+    setIsOpen(true);
+    setSelectedRegionIds(pinnedRegions.map((region) => region.id));
+    void sendMessage(
+      `So sánh ${labels}. Hãy nêu điểm giống, khác và trích dẫn từng nhận định theo đúng nhãn vùng.`,
+      pinnedRegions,
+    );
+  }
+
   return (
     <div className="chat-widget-container">
       {/* Floating Trigger Button when Collapsed */}
       {!isOpen && (
-        <button
-          className="chat-trigger-button"
-          type="button"
-          onClick={() => setIsOpen(true)}
-          data-testid="open-chat-button"
-          aria-label="Mở AI Chatbot VLearn"
-        >
-          <span className="chat-trigger-icon">💬</span>
-          <span className="chat-trigger-label">Hỏi AI VLearn</span>
-          {regions.length > 0 && <span className="chat-trigger-badge">{regions.length}</span>}
-        </button>
+        <div className="chat-trigger-stack">
+          {pinnedRegions.length >= 2 && (
+            <button
+              className="compare-trigger-button"
+              type="button"
+              onClick={comparePinnedRegions}
+              data-testid="compare-pinned-button"
+            >
+              ⇄ So sánh {pinnedRegions.length} vùng đã ghim
+            </button>
+          )}
+          <button
+            className="chat-trigger-button"
+            type="button"
+            onClick={() => setIsOpen(true)}
+            data-testid="open-chat-button"
+            aria-label="Mở AI Chatbot VLearn"
+          >
+            <span className="chat-trigger-icon">💬</span>
+            <span className="chat-trigger-label">Hỏi theo vùng</span>
+            {regions.length > 0 && <span className="chat-trigger-badge">{regions.length}</span>}
+          </button>
+        </div>
       )}
 
       {/* Expanded Collapsible Chat Window */}
@@ -125,7 +178,7 @@ export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
               <span className="chat-avatar-badge">🤖</span>
               <div>
                 <h4>VLearn AI Assistant</h4>
-                <p>{regions.length > 0 ? `${regions.length} vùng khoanh chọn` : "Sẵn sàng hỗ trợ"}</p>
+                <p>{regions.length > 0 ? `${regions.length} vùng · ${pinnedRegions.length} đã ghim` : "Sẵn sàng hỗ trợ"}</p>
               </div>
             </div>
             <div className="chat-header-actions">
@@ -183,11 +236,16 @@ export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
                       }}
                     >
                       <span className="chip-dot" style={{ backgroundColor: r.color.stroke }} />
-                      {r.label}
+                      {r.isPinned ? "📌 " : ""}{r.label} · T{r.pageNumber}
                     </button>
                   );
                 })}
               </div>
+            </div>
+          )}
+          {regions.length > 0 && (
+            <div className="context-window-note" data-testid="context-window-note">
+              Ngữ cảnh tự động: slide chứa vùng ± 1 slide lân cận; vùng khoanh luôn được ưu tiên.
             </div>
           )}
 
@@ -196,7 +254,51 @@ export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
             {messages.map((msg) => (
               <div key={msg.id} className={`chat-bubble-wrap ${msg.role}`}>
                 <div className="chat-bubble">
-                  <div className="chat-bubble-content"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
+                  <div className="chat-bubble-content">
+                    <ReactMarkdown
+                      components={{
+                        a: ({ href, children }) => {
+                          const sourceRegionId = href?.startsWith("#source-") ? href.slice("#source-".length) : null;
+                          if (sourceRegionId && regions.some((region) => region.id === sourceRegionId)) {
+                            return (
+                              <button
+                                type="button"
+                                className="source-citation"
+                                onClick={() => {
+                                  onTraceRegion(sourceRegionId);
+                                  setIsOpen(false);
+                                }}
+                                title="Mở đúng vùng nguồn trên slide"
+                              >
+                                {children}
+                              </button>
+                            );
+                          }
+                          const slidePage = href?.startsWith("#slide-")
+                            ? Number(href.slice("#slide-".length))
+                            : Number.NaN;
+                          if (Number.isInteger(slidePage) && slidePage > 0) {
+                            return (
+                              <button
+                                type="button"
+                                className="source-citation slide-citation"
+                                onClick={() => {
+                                  onTracePage(slidePage);
+                                  setIsOpen(false);
+                                }}
+                                title="Mở slide ngữ cảnh"
+                              >
+                                {children}
+                              </button>
+                            );
+                          }
+                          return <a href={href}>{children}</a>;
+                        },
+                      }}
+                    >
+                      {msg.role === "assistant" ? addCitationLinks(msg.content, regions) : msg.content}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               </div>
             ))}
@@ -219,6 +321,9 @@ export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
             </button>
             <button type="button" onClick={() => handleQuickPrompt("Tạo câu hỏi trắc nghiệm ôn tập")}>
               📝 Câu hỏi ôn tập
+            </button>
+            <button type="button" disabled={pinnedRegions.length < 2 || isLoading} onClick={comparePinnedRegions}>
+              ⇄ So sánh vùng ghim
             </button>
           </div>
 
