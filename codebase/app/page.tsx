@@ -433,7 +433,7 @@ export default function Home() {
 
           {hasRegions ? (
             <div className="region-list" data-testid="preview-result">
-              {regions.map((region, index) => (
+              {regions.map((region) => (
                 <div key={region.id} className="region-card">
                   <div className="region-card-header">
                     <div className="region-title">

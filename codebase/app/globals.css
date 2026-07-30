@@ -133,3 +133,11 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .chat-input-form button { padding:0 14px; border:none; border-radius:10px; color:white; background:var(--navy); font-weight:700; font-size:13px; }
 
 
+
+.chat-bubble-content > :first-child { margin-top:0; }
+.chat-bubble-content > :last-child { margin-bottom:0; }
+.chat-bubble-content p { margin:.35em 0; }
+.chat-bubble-content h1,.chat-bubble-content h2,.chat-bubble-content h3 { margin:.55em 0 .3em; font-size:1em; }
+.chat-bubble-content ul,.chat-bubble-content ol { margin:.4em 0; padding-left:1.3em; }
+.chat-bubble-content code { padding:.08em .3em; border-radius:4px; background:rgba(15,23,42,.08); font-size:.9em; }
+.chat-bubble-wrap.user .chat-bubble-content code { background:rgba(255,255,255,.18); }

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import type { SelectionRegion } from "../page";
 
 type Message = {
@@ -195,7 +196,7 @@ export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
             {messages.map((msg) => (
               <div key={msg.id} className={`chat-bubble-wrap ${msg.role}`}>
                 <div className="chat-bubble">
-                  <div className="chat-bubble-content">{msg.content}</div>
+                  <div className="chat-bubble-content"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
                 </div>
               </div>
             ))}
@@ -227,6 +228,7 @@ export function ChatWidget({ regions }: { regions: SelectionRegion[] }) {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              aria-label="Nhập câu hỏi cho VLearn AI Assistant"
               placeholder="Hỏi AI về slide hoặc các vùng khoanh..."
               disabled={isLoading}
             />

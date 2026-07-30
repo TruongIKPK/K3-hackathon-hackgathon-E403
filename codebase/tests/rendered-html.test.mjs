@@ -2,34 +2,72 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render() {
+async function request(path = "/", init = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
+  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}-${Math.random()}`);
   const { default: worker } = await import(workerUrl.href);
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    new Request(`http://localhost${path}`, {
+      headers: { accept: "text/html", ...(init.headers ?? {}) },
+      ...init,
+    }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
 }
 
 test("server renders the Freehand Slide Lab shell", async () => {
-  const response = await render();
+  const response = await request();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /<title>Freehand Slide Lab<\/title>/i);
   assert.match(html, /Khoanh vùng nội dung trên slide/i);
   assert.match(html, /Tải PDF từ máy/i);
-  assert.match(html, /Vùng đã chọn/i);
   assert.doesNotMatch(html, /Your site is taking shape|SkeletonPreview/i);
 });
 
-test("source contains the PDF, freehand, and mask-crop MVP path", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  assert.match(source, /import\("pdfjs-dist"\)/);
-  assert.match(source, /onPointerDown=\{handlePointerDown\}/);
-  assert.match(source, /context\.clip\(\)/);
-  assert.match(source, /toDataURL\("image\/png"\)/);
-  assert.match(source, /data-testid="preview-image"/);
+test("source contains the multi-region OCR and chatbot integration", async () => {
+  const [page, chatWidget, chatbotRoute] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/chat-widget.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/chatbot/route.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /import\("pdfjs-dist"\)/);
+  assert.match(page, /onPointerDown=\{handlePointerDown\}/);
+  assert.match(page, /context\.clip\(\)/);
+  assert.match(page, /parseRegionOCR/);
+  assert.match(page, /<ChatWidget regions=\{regions\}/);
+  assert.match(chatWidget, /ReactMarkdown/);
+  assert.match(chatWidget, /selectedRegions/);
+  assert.match(chatbotRoute, /BACKEND_CHATBOT_SERVICE_URL/);
+  assert.doesNotMatch(chatbotRoute, /Mẫu phản hồi|Đã nhận câu hỏi/);
+});
+
+test("chatbot proxy forwards the documented contract to Python", async () => {
+  const response = await request("/api/chatbot", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      messages: [
+        { id: "init-1", role: "assistant", content: "Xin chào" },
+        { id: "user-1", role: "user", content: "Giải thích Vùng 1" },
+      ],
+      selectedRegions: [
+        {
+          id: "region-1",
+          label: "Vùng 1",
+          parsedText: "",
+          previewUrl: "data:image/png;base64,aGVsbG8=",
+        },
+      ],
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.role, "assistant");
+  assert.match(body.content, /OCR/);
+  assert.match(body.timestamp, /^\d{4}-\d{2}-\d{2}T/);
 });
