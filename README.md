@@ -5,6 +5,13 @@
 - Thời lượng: **1,5 ngày** (một ngày build + một buổi demo)
 - Nhóm: **4-5 người** · zone tối đa 5 nhóm · thi theo lớp
 
+# Thành Viên Nhóm
+- Trần Duy Trường - 2A202601247
+- Nguyễn Khánh Toàn - 2A202601843
+- Hồ Văn Thi - 2A202601907
+- Nguyễn Quang Huy - 2A202601165
+- Lê Nguyễn Phi Trường - 2A202601541
+
 ## Bắt đầu từ đâu?
 
 1. Đọc **`01-de-bai.md`** để chọn hướng và hiểu tiêu chí.
