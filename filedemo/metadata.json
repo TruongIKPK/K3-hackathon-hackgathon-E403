@@ -1,0 +1,6 @@
+{
+  "name": "VLearn - Document Viewer & AI Tutor",
+  "description": "Hệ thống xem slide bài giảng và trợ lý học tập AI VLearn Tutor theo ngữ cảnh",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
