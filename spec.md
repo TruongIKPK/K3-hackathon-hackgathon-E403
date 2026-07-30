@@ -30,17 +30,19 @@ Loại: [x] Tối ưu tính năng có sẵn  [ ] Tính năng mới
 
 - **Bảng impact ≥3 ứng viên:**
 
-| Ứng viên | Bao nhiêu người gặp | Tần suất | Tốn gì mỗi lần | Build nổi trong sự kiện | Chọn? |
+| Ứng viên (hướng) | Bao nhiêu người gặp | Tần suất | Tốn gì mỗi lần | Build nổi trong sự kiện | Chọn? |
 |---|---|---|---|---|---|
-| OCR xử lý ảnh kém → AI trả lời sai vùng khoanh | 21/25 (84%) | Mỗi lần dùng freehand với ảnh/biểu đồ | ~3-5 phút hỏi lại + niềm tin giảm | ✅ Có (prototype freehand + LightOn OCR) | ✅ **CHỌN** |
-| AI tutor trả lời lan man, không bám tài liệu | ~60% (mining chatlog) | Theo từng câu hỏi | 2-3 phút đọc câu trả lời vô dụng | ✅ Nhưng cần data sâu hơn | ❌ Loại |
-| Học viên hỏi lặp cùng nội dung nhiều lần | ~40% (chatlog) | Theo buổi học | TA mất thời gian trả lời lặp | 🔴 Khó build trong 1,5 ngày | ❌ Loại |
+| **Hướng A — VLearn:** Tối ưu AI tutor — học viên khoanh vùng ảnh/biểu đồ nhưng AI trả lời sai do OCR kém | 21/25 (84%) xác nhận qua khảo sát | Mỗi lần gặp nội dung trực quan trong slide | ~3-5 phút hỏi lại + niềm tin vào tutor giảm | ✅ Có (freehand crop + LightOn OCR + AI response) | ✅ **CHỌN** |
+| **Hướng B — Trợ lý Discord:** Trợ lý không phân biệt được intent thật (hỏi bài vs logistics) → trả lời sai cỡ hoặc sai nội dung | Quan sát trực tiếp Discord (không có data pack riêng) | Liên tục, mỗi khi học viên nhắn tin | TA tốn thêm thời gian xử lý sau khi bot trả lời sai | 🔴 Không có data pack — phải tự quan sát Discord, khó thu bằng chứng đủ chuẩn trong thời gian sự kiện | ❌ Loại |
+| **Hướng C — Làn mở:** Mining chatlog đề xuất tính năng AI hoàn toàn mới cho khoá | Chưa xác định — cần mining trước mới biết | Chưa xác định | Chưa xác định | 🔴 Rủi ro cao: không đảm bảo tìm ra pain đủ mạnh và build nổi trong 1,5 ngày | ❌ Loại |
 
 - **Ứng viên ĐÃ LOẠI + vì sao:**
-  - *AI trả lời lan man:* Bằng chứng mining chưa đủ mạnh; giải pháp cần thay đổi prompt hệ thống lõi của VLearn ngoài phạm vi nhóm.
-  - *Câu hỏi lặp:* Không có bằng chứng khảo sát từ người dùng thật; phức tạp hơn lát cắt được phép xây.
+  - *Hướng B — Trợ lý Discord:* Pain có thật nhưng không có data pack — phải tự quan sát Discord trong thời gian sự kiện, rất khó thu bằng chứng đủ chuẩn (≥20 người, ≥50% xác nhận). Rủi ro không đủ evidence trước CP1.
+  - *Hướng C — Làn mở:* Quá rủi ro — chưa biết pain gì, tần suất bao nhiêu, ai gặp. Nếu mining xong không tìm ra pain build được trong 1,5 ngày thì không còn thời gian xoay sang hướng khác.
 
-- **Ứng viên CHỌN + vì sao (bằng số):** OCR xử lý ảnh kém → 84% người dùng bị ảnh hưởng, tần suất cao (mỗi buổi học có biểu đồ), sai thì học viên học sai kiến thức ngay (cost-of-error cao), và nhóm có thể build prototype Working với LightOn API trong sự kiện.
+- **Ứng viên CHỌN + vì sao (bằng số):** Hướng A — 21/25 (84%) người dùng xác nhận pain OCR xử lý ảnh kém qua khảo sát trực tiếp; 18/25 (72%) xác nhận AI bỏ sót ý quan trọng. Tần suất cao (mỗi buổi học có biểu đồ), cost-of-error cao (học sai kiến thức), và nhóm có thể build Working prototype với LightOn API trong sự kiện.
+
+
 
 ---
 
@@ -62,7 +64,7 @@ Loại: [x] Tối ưu tính năng có sẵn  [ ] Tính năng mới
   1. Không build OCR tự phát triển — dùng LightOn API.
   2. Không build chatbot đa lượt — chỉ một lượt hỏi-đáp theo vùng khoanh.
   3. Không lưu lịch sử hội thoại hay tài khoản người dùng.
-  4. Không deploy lên server thật hay tích hợp vào VLearn production.
+  4. Không cần deploy lên server thật hay tích hợp vào VLearn production.
 
 - **Mức prototype nhắm tới:** [x] Working — PDF render thật + freehand crop thật + OCR thật (LightOn API) + AI trả lời thật (prompt từ text OCR). Phần mock: giao diện chat đơn giản, không có context đa lượt.
 
