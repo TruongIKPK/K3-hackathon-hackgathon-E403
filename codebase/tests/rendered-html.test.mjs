@@ -54,6 +54,9 @@ test("source contains the multi-region OCR and chatbot integration", async () =>
   assert.match(page, /data-testid="tool-eraser"/);
   assert.match(page, /isPointNearRegion/);
   assert.match(page, /activeTool === "eraser"/);
+  assert.match(page, /NotebookPanel/);
+  assert.match(page, /addRegionToNotebook/);
+  assert.match(page, /tab-notebook/);
   assert.match(chatWidget, /usableRegions/);
   assert.match(chatWidget, /ReactMarkdown/);
   assert.match(chatWidget, /selectedRegions/);
