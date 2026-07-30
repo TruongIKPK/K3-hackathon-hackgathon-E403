@@ -3,6 +3,7 @@
 
 import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { ChatWidget } from "./components/chat-widget";
 
 type Point = { x: number; y: number };
 
@@ -504,6 +505,8 @@ export default function Home() {
           </div>
         </aside>
       </section>
+
+      <ChatWidget regions={regions} />
     </main>
   );
 }
