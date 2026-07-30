@@ -58,12 +58,18 @@ export default function Home() {
       const pdfjs = await import("pdfjs-dist");
       pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const loadedPdf = await pdfjs.getDocument({ data: bytes }).promise;
+      const loadedPdf = await pdfjs.getDocument({
+        data: bytes,
+        cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+        cMapPacked: true,
+        standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
+      }).promise;
       await pdf?.destroy();
       setPdf(loadedPdf);
       setFileName(file.name);
       setPageNumber(1);
-    } catch {
+    } catch (err) {
+      console.error("Error opening PDF file:", err);
       setError("Không thể mở file PDF này. Hãy thử một file khác.");
       setPdf(null);
       setFileName("");
