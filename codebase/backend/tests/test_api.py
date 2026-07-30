@@ -142,3 +142,48 @@ def test_rejects_slide_context_with_unknown_region() -> None:
     response = client.post("/api/chatbot", json=payload)
     assert response.status_code == 422
     assert set(response.json()) == {"error"}
+
+
+def test_telemetry_analytics_logging_for_text_only_request(monkeypatch, tmp_path) -> None:
+    def fake_answer(prompt) -> AIMessage:
+        return AIMessage(content="Trả lời câu hỏi thuần text.")
+
+    monkeypatch.setattr(agent_module, "get_chat_model", lambda: RunnableLambda(fake_answer))
+
+    payload = {
+        "messages": [
+            {"id": "u-1", "role": "user", "content": "Câu hỏi thuần văn bản không có vùng khoanh."}
+        ],
+        "selectedRegions": [],
+        "slideContexts": [],
+    }
+
+    test_log_file = tmp_path / "analytics.jsonl"
+    monkeypatch.setattr("app.main.ANALYTICS_FILE", test_log_file)
+
+    response = client.post("/api/chatbot", json=payload)
+    assert response.status_code == 200
+    assert test_log_file.exists()
+    log_content = test_log_file.read_text(encoding="utf-8")
+    assert "text_only" in log_content
+    assert "Câu hỏi thuần văn bản" in log_content
+
+
+def test_telemetry_analytics_logging_for_image_request(monkeypatch, tmp_path) -> None:
+    def fake_answer(prompt) -> AIMessage:
+        return AIMessage(content="Đã phân tích hình ảnh [Vùng 1].")
+
+    monkeypatch.setattr(agent_module, "get_chat_model", lambda: RunnableLambda(fake_answer))
+
+    payload = valid_payload()
+    payload["messages"][-1]["content"] = "Phân tích sơ đồ trong hình này"
+    test_log_file = tmp_path / "analytics.jsonl"
+    monkeypatch.setattr("app.main.ANALYTICS_FILE", test_log_file)
+
+    response = client.post("/api/chatbot", json=payload)
+    assert response.status_code == 200
+    assert test_log_file.exists()
+    log_content = test_log_file.read_text(encoding="utf-8")
+    assert "text_with_images" in log_content
+    assert "image_count" in log_content
+

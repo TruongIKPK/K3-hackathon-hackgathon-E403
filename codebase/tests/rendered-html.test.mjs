@@ -122,3 +122,11 @@ test("chatbot proxy forwards the documented contract to Python", async () => {
   assert.match(body.content, /OCR/);
   assert.match(body.timestamp, /^\d{4}-\d{2}-\d{2}T/);
 });
+
+test("source contains the canvas hover dual-choice buttons (paste text & image)", async () => {
+  const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf-8");
+  assert.match(pageSource, /hover-add-text-btn/);
+  assert.match(pageSource, /hover-add-image-btn/);
+  assert.match(pageSource, /Dán chữ/);
+  assert.match(pageSource, /Dán hình/);
+});
