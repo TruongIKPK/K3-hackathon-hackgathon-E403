@@ -1,12 +1,36 @@
 "use client";
-/* eslint-disable @next/next/no-img-element -- The crop preview is an in-memory data URL. */
+/* eslint-disable @next/next/no-img-element -- Crop previews are in-memory data URLs. */
 
 import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { ChatWidget } from "./components/chat-widget";
 
 type Point = { x: number; y: number };
 
-function Icon({ name }: { name: "upload" | "lasso" | "trash" | "play" | "left" | "right" }) {
+export type SelectionRegion = {
+  id: string;
+  label: string;
+  color: { stroke: string; fill: string; badge: string };
+  points: Point[];
+  isClosed: boolean;
+  previewUrl?: string;
+  previewWidth?: number;
+  previewHeight?: number;
+  parsedText?: string;
+  parseError?: string;
+  isParsing?: boolean;
+};
+
+const REGION_COLORS = [
+  { stroke: "#f59e0b", fill: "rgba(245, 158, 11, 0.15)", badge: "#d97706" }, // Amber
+  { stroke: "#3b82f6", fill: "rgba(59, 130, 246, 0.15)", badge: "#2563eb" }, // Blue
+  { stroke: "#10b981", fill: "rgba(16, 185, 129, 0.15)", badge: "#059669" }, // Emerald
+  { stroke: "#ec4899", fill: "rgba(236, 72, 153, 0.15)", badge: "#db2777" }, // Pink
+  { stroke: "#8b5cf6", fill: "rgba(139, 92, 246, 0.15)", badge: "#7c3aed" }, // Purple
+  { stroke: "#06b6d4", fill: "rgba(6, 182, 212, 0.15)", badge: "#0891b2" },  // Cyan
+];
+
+function Icon({ name }: { name: "upload" | "lasso" | "trash" | "play" | "left" | "right" | "refresh" }) {
   const paths = {
     upload: <><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M5 20h14" /></>,
     lasso: <><path d="M7.5 20.5c-1.8 0-3-1-3-2.4 0-1.5 1.4-2.6 3.3-2.6 1.7 0 3.2.8 3.2 2.2 0 1.6-1.6 2.8-3.5 2.8Z" /><path d="M11 17.7c5.1-.4 8.5-3.1 8.5-6.7 0-4-3.5-7-8-7s-8 2.8-8 6.3c0 2.4 1.7 4.3 4.1 5.1" /></>,
@@ -14,6 +38,7 @@ function Icon({ name }: { name: "upload" | "lasso" | "trash" | "play" | "left" |
     play: <path d="m9 7 8 5-8 5V7Z" />,
     left: <path d="m15 18-6-6 6-6" />,
     right: <path d="m9 18 6-6-6-6" />,
+    refresh: <><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></>,
   };
   return <svg aria-hidden="true" className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -24,27 +49,28 @@ export default function Home() {
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const drawingRef = useRef(false);
+
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [fileName, setFileName] = useState("");
   const [pageNumber, setPageNumber] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [points, setPoints] = useState<Point[]>([]);
-  const [isClosed, setIsClosed] = useState(false);
-  const [preview, setPreview] = useState<{ url: string; width: number; height: number } | null>(null);
-  const [parsedText, setParsedText] = useState("");
-  const [parseError, setParseError] = useState("");
-  const [isParsing, setIsParsing] = useState(false);
+
+  // Multi-region states
+  const [regions, setRegions] = useState<SelectionRegion[]>([]);
+  const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
 
   const totalPages = pdf?.numPages ?? 0;
+  const isAnyParsing = regions.some((r) => r.isParsing);
 
-  function clearSelection() {
+  function clearAllSelections() {
     drawingRef.current = false;
-    setPoints([]);
-    setIsClosed(false);
-    setPreview(null);
-    setParsedText("");
-    setParseError("");
+    setCurrentPoints([]);
+    setRegions([]);
+  }
+
+  function deleteRegion(id: string) {
+    setRegions((prev) => prev.filter((r) => r.id !== id));
   }
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -58,10 +84,10 @@ export default function Home() {
 
     setIsLoading(true);
     setError("");
-    clearSelection();
+    clearAllSelections();
     try {
       const pdfjs = await import("pdfjs-dist");
-      pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
       const bytes = new Uint8Array(await file.arrayBuffer());
       const loadedPdf = await pdfjs.getDocument({
         data: bytes,
@@ -138,35 +164,72 @@ export default function Home() {
     };
   }, [pdf, pageNumber]);
 
+  // Render all regions and current active stroke on overlay canvas
   useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
     const context = overlay.getContext("2d");
     if (!context) return;
     context.clearRect(0, 0, overlay.width, overlay.height);
-    if (points.length < 2) return;
 
-    context.save();
-    context.beginPath();
-    context.moveTo(points[0].x * overlay.width, points[0].y * overlay.height);
-    for (let index = 1; index < points.length; index += 1) {
-      context.lineTo(points[index].x * overlay.width, points[index].y * overlay.height);
-    }
-    if (isClosed) context.closePath();
-    context.strokeStyle = "#f59e0b";
-    context.lineWidth = Math.max(4, overlay.width / 260);
-    context.lineCap = "round";
-    context.lineJoin = "round";
-    context.shadowColor = "rgba(133, 77, 14, .2)";
-    context.shadowBlur = 2;
-    context.stroke();
-    if (isClosed) {
-      context.fillStyle = "rgba(245, 158, 11, .08)";
+    // 1. Render all saved regions
+    regions.forEach((region, index) => {
+      if (region.points.length < 2) return;
+      context.save();
+      context.beginPath();
+      context.moveTo(region.points[0].x * overlay.width, region.points[0].y * overlay.height);
+      for (let i = 1; i < region.points.length; i += 1) {
+        context.lineTo(region.points[i].x * overlay.width, region.points[i].y * overlay.height);
+      }
+      context.closePath();
+      context.strokeStyle = region.color.stroke;
+      context.lineWidth = Math.max(3, overlay.width / 260);
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.shadowColor = "rgba(0, 0, 0, 0.15)";
+      context.shadowBlur = 3;
+      context.stroke();
+      context.fillStyle = region.color.fill;
       context.fill();
-    }
-    context.restore();
-  }, [points, isClosed]);
 
+      // Render Region Badge Tag (#1, #2...) near starting point
+      const startX = region.points[0].x * overlay.width;
+      const startY = region.points[0].y * overlay.height;
+      const badgeRadius = 11;
+      context.beginPath();
+      context.arc(startX, startY, badgeRadius, 0, Math.PI * 2);
+      context.fillStyle = region.color.badge;
+      context.shadowColor = "rgba(0,0,0,0.3)";
+      context.shadowBlur = 4;
+      context.fill();
+      context.strokeStyle = "#ffffff";
+      context.lineWidth = 2;
+      context.stroke();
+
+      context.fillStyle = "#ffffff";
+      context.font = "bold 11px Inter, sans-serif";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(`${index + 1}`, startX, startY + 0.5);
+      context.restore();
+    });
+
+    // 2. Render current active stroke being drawn
+    if (currentPoints.length >= 2) {
+      context.save();
+      context.beginPath();
+      context.moveTo(currentPoints[0].x * overlay.width, currentPoints[0].y * overlay.height);
+      for (let i = 1; i < currentPoints.length; i += 1) {
+        context.lineTo(currentPoints[i].x * overlay.width, currentPoints[i].y * overlay.height);
+      }
+      context.strokeStyle = "#f59e0b";
+      context.lineWidth = Math.max(3.5, overlay.width / 260);
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.stroke();
+      context.restore();
+    }
+  }, [regions, currentPoints]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLCanvasElement>): Point {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -180,62 +243,24 @@ export default function Home() {
     if (isLoading) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     drawingRef.current = true;
-    setIsClosed(false);
-    setPreview(null);
-    setParsedText("");
-    setParseError("");
-    setPoints([pointFromEvent(event)]);
+    setCurrentPoints([pointFromEvent(event)]);
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (!drawingRef.current) return;
     const nextPoint = pointFromEvent(event);
-    setPoints((current) => {
+    setCurrentPoints((current) => {
       const last = current[current.length - 1];
       if (last && Math.hypot(nextPoint.x - last.x, nextPoint.y - last.y) < 0.003) return current;
       return [...current, nextPoint];
     });
   }
 
-  function finishDrawing(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (!drawingRef.current) return;
-    drawingRef.current = false;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    setPoints((current) => {
-      if (current.length >= 3) setIsClosed(true);
-      return current;
-    });
-  }
-
-  async function parseSelectionImage(dataUrl: string) {
-    setIsParsing(true);
-    setParseError("");
-    setParsedText("");
-    try {
-      const imageBlob = await (await fetch(dataUrl)).blob();
-      const formData = new FormData();
-      formData.append("file", imageBlob, "selection.png");
-      const response = await fetch("/api/parse-selection", {
-        method: "POST",
-        body: formData,
-      });
-      const payload = (await response.json()) as { markdown?: string; error?: string };
-      if (!response.ok) throw new Error(payload.error || "Không thể parse ảnh đã khoanh vùng.");
-      setParsedText(payload.markdown?.trim() || "Không tìm thấy nội dung text trong ảnh đã chọn.");
-    } catch (parseFailure) {
-      setParseError(parseFailure instanceof Error ? parseFailure.message : "Không thể parse ảnh đã khoanh vùng.");
-    } finally {
-      setIsParsing(false);
-    }
-  }
-
-  function processSelection() {
+  function cropRegion(regionPoints: Point[]) {
     const source = canvasRef.current;
-    if (!source || !isClosed || points.length < 3) return;
-    setParseError("");
-    setParsedText("");
+    if (!source || regionPoints.length < 3) return null;
 
-    const pixelPoints = points.map((point) => ({
+    const pixelPoints = regionPoints.map((point) => ({
       x: point.x * source.width,
       y: point.y * source.height,
     }));
@@ -250,7 +275,7 @@ export default function Home() {
     output.width = Math.max(1, maxX - minX + padding * 2);
     output.height = Math.max(1, maxY - minY + padding * 2);
     const context = output.getContext("2d");
-    if (!context) return;
+    if (!context) return null;
 
     context.save();
     context.translate(padding - minX, padding - minY);
@@ -264,21 +289,81 @@ export default function Home() {
     context.drawImage(source, 0, 0);
     context.restore();
 
-    const url = output.toDataURL("image/png");
-    setPreview({
-      url,
+    return {
+      url: output.toDataURL("image/png"),
       width: output.width,
       height: output.height,
+    };
+  }
+
+  async function parseRegionOCR(regionId: string, previewUrl: string) {
+    setRegions((prev) =>
+      prev.map((r) => (r.id === regionId ? { ...r, isParsing: true, parseError: "", parsedText: "" } : r))
+    );
+    try {
+      const imageBlob = await (await fetch(previewUrl)).blob();
+      const formData = new FormData();
+      formData.append("file", imageBlob, `${regionId}.png`);
+      const response = await fetch("/api/parse-selection", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = (await response.json()) as { markdown?: string; error?: string };
+      if (!response.ok) throw new Error(payload.error || "Không thể parse ảnh đã khoanh vùng.");
+      const markdown = payload.markdown?.trim() || "Không tìm thấy nội dung text trong ảnh đã chọn.";
+      setRegions((prev) =>
+        prev.map((r) => (r.id === regionId ? { ...r, parsedText: markdown, isParsing: false } : r))
+      );
+    } catch (parseFailure) {
+      const errorMsg = parseFailure instanceof Error ? parseFailure.message : "Không thể parse ảnh đã khoanh vùng.";
+      setRegions((prev) =>
+        prev.map((r) => (r.id === regionId ? { ...r, parseError: errorMsg, isParsing: false } : r))
+      );
+    }
+  }
+
+  function finishDrawing(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+
+    if (currentPoints.length >= 3) {
+      const cropped = cropRegion(currentPoints);
+      const index = regions.length;
+      const color = REGION_COLORS[index % REGION_COLORS.length];
+      const newRegion: SelectionRegion = {
+        id: `region-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        label: `Vùng ${index + 1}`,
+        color,
+        points: currentPoints,
+        isClosed: true,
+        previewUrl: cropped?.url,
+        previewWidth: cropped?.width,
+        previewHeight: cropped?.height,
+      };
+
+      setRegions((prev) => [...prev, newRegion]);
+      if (cropped?.url) {
+        void parseRegionOCR(newRegion.id, cropped.url);
+      }
+    }
+    setCurrentPoints([]);
+  }
+
+  function processAllRegions() {
+    regions.forEach((region) => {
+      if (region.previewUrl && !region.isParsing) {
+        void parseRegionOCR(region.id, region.previewUrl);
+      }
     });
-    void parseSelectionImage(url);
   }
 
   const chooseFile = () => fileInputRef.current?.click();
   const goToPage = (nextPage: number) => {
-    clearSelection();
+    clearAllSelections();
     setPageNumber(Math.max(1, Math.min(totalPages, nextPage)));
   };
-  const hasSelection = isClosed && points.length >= 3;
+  const hasRegions = regions.length > 0;
 
   return (
     <main className="app-shell">
@@ -293,11 +378,11 @@ export default function Home() {
         <div className="document-column">
           <div className="toolbar" aria-label="Công cụ khoanh vùng">
             <div className="tool-group">
-              <button className="tool-button active" type="button"><Icon name="lasso" />Khoanh vùng</button>
-              <button className="tool-button" type="button" disabled={!hasSelection} onClick={clearSelection} data-testid="clear-selection"><Icon name="trash" />Xóa vùng</button>
+              <button className="tool-button active" type="button"><Icon name="lasso" />Khoanh vùng ({regions.length})</button>
+              <button className="tool-button" type="button" disabled={!hasRegions && currentPoints.length === 0} onClick={clearAllSelections} data-testid="clear-selection"><Icon name="trash" />Xóa tất cả vùng</button>
             </div>
             <div className="file-status" title={fileName || "Chưa có tài liệu"}><span className={pdf ? "status-dot ready" : "status-dot"} />{fileName || "Chưa có tài liệu"}</div>
-            <button className="process-button" type="button" disabled={!hasSelection || isParsing} onClick={processSelection} data-testid="process-button"><Icon name="play" />{isParsing ? "Parsing..." : "Process"}</button>
+            <button className="process-button" type="button" disabled={!hasRegions || isAnyParsing} onClick={processAllRegions} data-testid="process-button"><Icon name="play" />{isAnyParsing ? "Parsing OCR..." : "Process OCR"}</button>
           </div>
 
           <div className="slide-frame">
@@ -307,7 +392,7 @@ export default function Home() {
                 <div className="empty-state">
                   <div className="empty-icon"><Icon name="upload" /></div>
                   <h2>Chọn một file PDF để bắt đầu</h2>
-                  <p>Slide sẽ hiển thị tại đây. Sau đó, dùng chuột hoặc bút để vẽ một vùng tự do.</p>
+                  <p>Slide sẽ hiển thị tại đây. Bạn có thể khoanh nhiều vùng khác nhau bằng chuột hoặc bút.</p>
                   <button type="button" onClick={chooseFile}>Chọn PDF</button>
                 </div>
               )}
@@ -322,9 +407,9 @@ export default function Home() {
                     onPointerUp={finishDrawing}
                     onPointerCancel={finishDrawing}
                     data-testid="selection-canvas"
-                    data-points={points.length}
-                    data-closed={isClosed}
-                    aria-label="Vùng vẽ khoanh tự do"
+                    data-points={currentPoints.length || (regions[regions.length - 1]?.points.length ?? 0)}
+                    data-closed={hasRegions || currentPoints.length >= 3}
+                    aria-label="Vùng vẽ khoanh tự do đa phân vùng"
                   />
                 </div>
               )}
@@ -341,40 +426,87 @@ export default function Home() {
         </div>
 
         <aside className="preview-panel">
-          <div className="preview-heading"><div><p className="eyebrow">KẾT QUẢ</p><h2>Vùng đã chọn</h2></div><span className={preview ? "preview-badge ready" : "preview-badge"}>{preview ? "Đã xử lý" : "Preview"}</span></div>
-          {preview ? (
-            <div className="preview-result" data-testid="preview-result">
-              <div className="preview-image-wrap">
-                <img src={preview.url} alt="Ảnh cắt từ vùng khoanh tự do" data-testid="preview-image" />
-              </div>
-              <div className="preview-caption"><span>PNG · mặt nạ freehand</span><span>{preview.width} × {preview.height}px</span></div>
-              <div className="parsed-output">
-                <div className="parsed-output-heading">
-                  <h3>Text sau khi parse</h3>
-                  {isParsing && <span><span className="spinner small" />Đang parse</span>}
+          <div className="preview-heading">
+            <div><p className="eyebrow">KẾT QUẢ PHÂN TÍCH</p><h2>Danh sách phân vùng ({regions.length})</h2></div>
+            <span className={hasRegions ? "preview-badge ready" : "preview-badge"}>{hasRegions ? `${regions.length} Vùng` : "Preview"}</span>
+          </div>
+
+          {hasRegions ? (
+            <div className="region-list" data-testid="preview-result">
+              {regions.map((region, index) => (
+                <div key={region.id} className="region-card">
+                  <div className="region-card-header">
+                    <div className="region-title">
+                      <span className="region-color-dot" style={{ backgroundColor: region.color.stroke }} />
+                      <span>{region.label}</span>
+                    </div>
+                    <div className="region-card-actions">
+                      <button
+                        className="region-action-btn parse-btn"
+                        type="button"
+                        disabled={region.isParsing}
+                        onClick={() => region.previewUrl && parseRegionOCR(region.id, region.previewUrl)}
+                        title="Chạy lại OCR"
+                      >
+                        <Icon name="refresh" /> {region.isParsing ? "Parsing..." : "OCR"}
+                      </button>
+                      <button
+                        className="region-action-btn"
+                        type="button"
+                        onClick={() => deleteRegion(region.id)}
+                        title="Xóa vùng này"
+                      >
+                        <Icon name="trash" /> Xóa
+                      </button>
+                    </div>
+                  </div>
+
+                  {region.previewUrl && (
+                    <div className="preview-image-wrap">
+                      <img src={region.previewUrl} alt={`Ảnh cắt ${region.label}`} data-testid="preview-image" />
+                    </div>
+                  )}
+
+                  <div className="preview-caption">
+                    <span>PNG · {region.label}</span>
+                    <span>{region.previewWidth} × {region.previewHeight}px</span>
+                  </div>
+
+                  <div className="parsed-output">
+                    <div className="parsed-output-heading">
+                      <h3>Phân tích OCR ({region.label})</h3>
+                      {region.isParsing && <span><span className="spinner small" />Đang parse</span>}
+                    </div>
+                    {region.parseError ? (
+                      <p className="parse-error" role="alert">{region.parseError}</p>
+                    ) : (
+                      <textarea
+                        readOnly
+                        value={region.parsedText || ""}
+                        placeholder={region.isParsing ? "Đang gửi ảnh vùng chọn tới LightOn OCR..." : "Text OCR sẽ hiển thị tại đây."}
+                        aria-label={`Text sau khi parse từ ${region.label}`}
+                      />
+                    )}
+                  </div>
                 </div>
-                {parseError ? (
-                  <p className="parse-error" role="alert">{parseError}</p>
-                ) : (
-                  <textarea
-                    readOnly
-                    value={parsedText}
-                    placeholder={isParsing ? "Đang gửi ảnh đã khoanh vùng tới LightOn..." : "Text parse sẽ hiển thị tại đây."}
-                    aria-label="Text sau khi parse từ ảnh đã khoanh vùng"
-                  />
-                )}
-              </div>
+              ))}
             </div>
           ) : (
             <div className="preview-empty">
               <div className="preview-placeholder"><Icon name="lasso" /></div>
-              <h3>{hasSelection ? "Vùng khoanh đã sẵn sàng" : "Chưa có vùng được xử lý"}</h3>
-              <p>{hasSelection ? "Đường khoanh đã khép kín. Nhấn Process để tạo ảnh xem trước." : <>Vẽ một đường khép kín quanh nội dung, rồi nhấn <strong>Process</strong>.</>}</p>
+              <h3>Chưa có vùng nào được khoanh</h3>
+              <p>Vẽ một hoặc nhiều đường khoanh tự do quanh các vùng nội dung khác nhau trên slide.</p>
             </div>
           )}
-          <div className="hint-card"><span>01</span><p>Đường vẽ tự do sẽ được dùng làm mặt nạ để cắt đúng phần nội dung bên trong.</p></div>
+
+          <div className="hint-card" style={{ marginTop: 20 }}>
+            <span>01</span>
+            <p>Mỗi phân vùng được cắt riêng và gửi tới OCR độc lập, không bị gộp chung nội dung.</p>
+          </div>
         </aside>
       </section>
+
+      <ChatWidget regions={regions} />
     </main>
   );
 }
