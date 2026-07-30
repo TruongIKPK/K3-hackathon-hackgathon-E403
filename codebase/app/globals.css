@@ -72,6 +72,19 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .parsed-output-heading h3 { margin:0; font-size:14px; letter-spacing:0; }
 .parsed-output-heading span { display:inline-flex; align-items:center; gap:7px; color:var(--navy); font-size:11px; font-weight:800; }
 .spinner.small { width:13px; height:13px; }
-.parsed-output textarea { width:100%; min-height:180px; resize:vertical; padding:12px; border:1px solid #cddbe8; border-radius:12px; color:var(--ink); background:#fbfdff; font-size:13px; line-height:1.55; }
+.parsed-output textarea { width:100%; min-height:140px; resize:vertical; padding:12px; border:1px solid #cddbe8; border-radius:12px; color:var(--ink); background:#fbfdff; font-size:13px; line-height:1.55; }
 .parsed-output textarea::placeholder { color:#8a9aab; }
 .parse-error { margin:0; padding:11px 12px; border:1px solid #fecaca; border-radius:10px; color:#991b1b; background:#fff1f2; font-size:13px; line-height:1.5; }
+
+/* Multi-Region Styles */
+.region-list { display:flex; flex-direction:column; gap:20px; margin-top:16px; max-height:calc(100vh - 240px); overflow-y:auto; padding-right:4px; }
+.region-card { padding:14px; border:1px solid var(--line); border-radius:14px; background:white; box-shadow:0 4px 12px rgba(23,37,56,.04); transition:all .2s ease; }
+.region-card:hover { border-color:#b7d0e7; box-shadow:0 6px 18px rgba(23,37,56,.08); }
+.region-card-header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+.region-title { display:flex; align-items:center; gap:8px; font-weight:750; font-size:14px; color:var(--ink); }
+.region-color-dot { width:12px; height:12px; border-radius:50%; flex:0 0 auto; box-shadow:0 0 0 2px rgba(0,0,0,.06); }
+.region-card-actions { display:flex; align-items:center; gap:6px; }
+.region-action-btn { padding:4px 8px; border:1px solid var(--line); border-radius:8px; color:var(--muted); background:white; font-size:11px; font-weight:600; display:inline-flex; align-items:center; gap:4px; transition:all .15s; }
+.region-action-btn:hover { color:#991b1b; border-color:#fecaca; background:#fff1f2; }
+.region-action-btn.parse-btn:hover { color:var(--navy); border-color:#9bbce0; background:var(--blue-soft); }
+
