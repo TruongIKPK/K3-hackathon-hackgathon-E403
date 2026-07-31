@@ -133,11 +133,11 @@ Loại: [x] Tối ưu tính năng có sẵn  [ ] Tính năng mới
 
 | Lượt | Thời điểm | % Answer relevance | % Failure detection | Ghi chú |
 |---|---|---|---|---|
-| — | CP1 | — | — | Khám phá bài toán & chốt Canvas CP1 (khảo sát 25 người dùng) |
-| — | CP2 | 50.0% (10/20) | 80.0% | Khởi tạo Prototype (Freehand crop PDF + OCR baseline) |
-| 1 | CP3 | 70.0% (14/20) | 100.0% | Lượt đo 1: Cải thiện prompt & trích xuất OCR (14/20 case pass) |
-| — | CP4 | 85.0% (17/20) | 100.0% | Tối ưu System Prompt, bổ sung 4 lớp guardrails rủi ro & vision routing |
-| 2 | CP5 | 95.0% (19/20) | 100.0% (8/8 API unit tests) | Lượt đo 2: Chạy full live eval suite (19/20 case pass & 8/8 unit tests) |
+| 1 | CP1 | — | — | Khám phá bài toán & chốt Canvas CP1 (khảo sát 25 người dùng) |
+| 2 | CP2 | 50.0% (10/20) | 80.0% | Khởi tạo Prototype (Freehand crop PDF + OCR baseline) |
+| 3 | CP3 | 70.0% (14/20) | 100.0% | Lượt đo 1: Cải thiện prompt & trích xuất OCR (14/20 case pass) |
+| 4 | CP4 | 85.0% (17/20) | 100.0% | Tối ưu System Prompt, bổ sung 4 lớp guardrails rủi ro & vision routing |
+| 5 | CP5 | 95.0% (19/20) | 100.0% (8/8 API unit tests) | Lượt đo 2: Chạy full live eval suite (19/20 case pass & 8/8 unit tests) |
 
 ---
 
