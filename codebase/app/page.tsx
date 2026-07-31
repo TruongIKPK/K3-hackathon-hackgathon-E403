@@ -890,7 +890,7 @@ function stripHtmlTags(raw: string): string {
               onClick={() => setSidebarTab("notebook")}
               data-testid="tab-notebook"
             >
-              📖 Quyển tập ({docItems.length})
+              Sổ tay cá nhân ({docItems.length})
             </button>
           </div>
 
