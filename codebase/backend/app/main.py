@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -15,6 +18,27 @@ from .settings import get_settings
 
 logger = logging.getLogger("vlearn-chatbot")
 settings = get_settings()
+
+LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+ANALYTICS_FILE = LOGS_DIR / "analytics.jsonl"
+
+
+def log_analytics_event(event_data: dict) -> None:
+    logger.info(
+        "[DATA MINING LOG] Type: %s | Regions: %d | Images: %d | Vision: %s | Duration: %.2fms",
+        event_data.get("request_type"),
+        event_data.get("region_count", 0),
+        event_data.get("image_count", 0),
+        event_data.get("should_use_vision", False),
+        event_data.get("duration_ms", 0.0),
+    )
+    try:
+        with open(ANALYTICS_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event_data, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.warning("Failed to record analytics event: %s", exc)
+
 
 app = FastAPI(
     title="VLearn LangChain Chatbot Service",
@@ -62,6 +86,13 @@ async def health() -> dict[str, object]:
     },
 )
 async def chatbot(payload: ChatRequest):
+    start_time = time.perf_counter()
+    user_question = payload.messages[-1].content if payload.messages else ""
+    regions = payload.selected_regions or []
+    region_count = len(regions)
+    images_with_url = [r for r in regions if r.preview_url and r.preview_url.startswith("data:image")]
+    image_count = len(images_with_url)
+
     try:
         result = await chatbot_graph.ainvoke(
             {
@@ -80,8 +111,32 @@ async def chatbot(payload: ChatRequest):
             content={"error": "Không thể kết nối tới Chatbot AI Service."},
         )
 
+    duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+    should_use_vision = bool(result.get("should_use_vision", False))
+    answer_text = result.get("answer", "")
+
+    if image_count > 0 or should_use_vision:
+        request_type = "text_with_images"
+    elif region_count > 0:
+        request_type = "text_with_regions"
+    else:
+        request_type = "text_only"
+
+    analytics_event = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "request_type": request_type,
+        "question": user_question,
+        "region_count": region_count,
+        "image_count": image_count,
+        "should_use_vision": should_use_vision,
+        "response_length": len(answer_text),
+        "duration_ms": duration_ms,
+    }
+
+    log_analytics_event(analytics_event)
+
     return ChatResponse(
         role="assistant",
-        content=result["answer"],
+        content=answer_text,
         timestamp=datetime.now(timezone.utc),
     )

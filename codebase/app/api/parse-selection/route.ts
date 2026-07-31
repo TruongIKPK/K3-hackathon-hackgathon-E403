@@ -15,6 +15,8 @@ type LightOnResponse = {
   message?: string;
 };
 
+
+
 export async function POST(request: NextRequest) {
   const apiKey = process.env.LIGHTON_API_KEY;
   if (!apiKey) {

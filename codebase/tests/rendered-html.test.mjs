@@ -51,6 +51,12 @@ test("source contains the multi-region OCR and chatbot integration", async () =>
   assert.match(page, /assessRegionGeometry/);
   assert.match(page, /quality-panel/);
   assert.match(page, /qualityOverride/);
+  assert.match(page, /data-testid="tool-eraser"/);
+  assert.match(page, /isPointNearRegion/);
+  assert.match(page, /activeTool === "eraser"/);
+  assert.match(page, /NotebookPanel/);
+  assert.match(page, /addRegionToNotebook/);
+  assert.match(page, /tab-notebook/);
   assert.match(chatWidget, /usableRegions/);
   assert.match(chatWidget, /ReactMarkdown/);
   assert.match(chatWidget, /selectedRegions/);
@@ -84,7 +90,7 @@ test("chatbot proxy forwards the documented contract to Python", async () => {
           label: "Vùng 1",
           pageNumber: 3,
           parsedText: "",
-          previewUrl: "data:image/png;base64,aGVsbG8=",
+          previewUrl: "",
         },
       ],
       slideContexts: [
@@ -115,4 +121,12 @@ test("chatbot proxy forwards the documented contract to Python", async () => {
   assert.equal(body.role, "assistant");
   assert.match(body.content, /OCR/);
   assert.match(body.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("source contains the canvas hover dual-choice buttons (paste text & image)", async () => {
+  const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf-8");
+  assert.match(pageSource, /hover-add-text-btn/);
+  assert.match(pageSource, /hover-add-image-btn/);
+  assert.match(pageSource, /Dán chữ/);
+  assert.match(pageSource, /Dán hình/);
 });

@@ -69,9 +69,10 @@ def test_rejects_missing_messages_with_error_contract() -> None:
     assert set(response.json()) == {"error"}
 
 
-def test_returns_guardrail_clarification_without_ocr() -> None:
+def test_returns_guardrail_clarification_without_ocr_and_without_preview() -> None:
     payload = valid_payload()
     payload["selectedRegions"][0]["parsedText"] = ""
+    payload["selectedRegions"][0]["previewUrl"] = ""
     response = client.post("/api/chatbot", json=payload)
     assert response.status_code == 200
     body = response.json()
@@ -80,11 +81,38 @@ def test_returns_guardrail_clarification_without_ocr() -> None:
     datetime.fromisoformat(body["timestamp"].replace("Z", "+00:00"))
 
 
+def test_triggers_vision_routing_with_low_detail(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_answer(messages) -> AIMessage:
+        captured["messages"] = messages
+        return AIMessage(content="Đã phân tích sơ đồ thành công [Vùng 1].")
+
+    fake_model = RunnableLambda(fake_answer)
+    monkeypatch.setattr(agent_module, "get_chat_model", lambda: fake_model)
+
+    payload = valid_payload()
+    payload["messages"][-1]["content"] = "Hãy phân tích hình ảnh và sơ đồ trong Vùng 1"
+    response = client.post("/api/chatbot", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["role"] == "assistant"
+    assert "Đã phân tích" in body["content"]
+
+    # Verify multimodal message content block attached detail: "low"
+    messages = captured.get("messages", [])
+    user_msg = messages[-1]
+    assert isinstance(user_msg.content, list)
+    image_block = user_msg.content[1]
+    assert image_block["type"] == "image_url"
+    assert image_block["image_url"]["detail"] == "low"
+
+
 def test_success_response_matches_api_contract(monkeypatch) -> None:
     captured: dict[str, str] = {}
 
     def fake_answer(prompt) -> AIMessage:
-        captured["prompt"] = prompt.to_string()
+        captured["prompt"] = str(prompt)
         return AIMessage(
             content=(
                 "### Giải thích\nAgent có thể lập kế hoạch và dùng công cụ. "
@@ -114,3 +142,48 @@ def test_rejects_slide_context_with_unknown_region() -> None:
     response = client.post("/api/chatbot", json=payload)
     assert response.status_code == 422
     assert set(response.json()) == {"error"}
+
+
+def test_telemetry_analytics_logging_for_text_only_request(monkeypatch, tmp_path) -> None:
+    def fake_answer(prompt) -> AIMessage:
+        return AIMessage(content="Trả lời câu hỏi thuần text.")
+
+    monkeypatch.setattr(agent_module, "get_chat_model", lambda: RunnableLambda(fake_answer))
+
+    payload = {
+        "messages": [
+            {"id": "u-1", "role": "user", "content": "Câu hỏi thuần văn bản không có vùng khoanh."}
+        ],
+        "selectedRegions": [],
+        "slideContexts": [],
+    }
+
+    test_log_file = tmp_path / "analytics.jsonl"
+    monkeypatch.setattr("app.main.ANALYTICS_FILE", test_log_file)
+
+    response = client.post("/api/chatbot", json=payload)
+    assert response.status_code == 200
+    assert test_log_file.exists()
+    log_content = test_log_file.read_text(encoding="utf-8")
+    assert "text_only" in log_content
+    assert "Câu hỏi thuần văn bản" in log_content
+
+
+def test_telemetry_analytics_logging_for_image_request(monkeypatch, tmp_path) -> None:
+    def fake_answer(prompt) -> AIMessage:
+        return AIMessage(content="Đã phân tích hình ảnh [Vùng 1].")
+
+    monkeypatch.setattr(agent_module, "get_chat_model", lambda: RunnableLambda(fake_answer))
+
+    payload = valid_payload()
+    payload["messages"][-1]["content"] = "Phân tích sơ đồ trong hình này"
+    test_log_file = tmp_path / "analytics.jsonl"
+    monkeypatch.setattr("app.main.ANALYTICS_FILE", test_log_file)
+
+    response = client.post("/api/chatbot", json=payload)
+    assert response.status_code == 200
+    assert test_log_file.exists()
+    log_content = test_log_file.read_text(encoding="utf-8")
+    assert "text_with_images" in log_content
+    assert "image_count" in log_content
+

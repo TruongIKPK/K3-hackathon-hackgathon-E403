@@ -2,8 +2,8 @@
 /* eslint-disable @next/next/no-img-element -- Crop previews are in-memory data URLs. */
 
 import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
-import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ChatWidget } from "./components/chat-widget";
+import { NotebookPanel, type DocItem } from "./components/notebook-panel";
 import { assessRegionContent, assessRegionGeometry, isRegionUsable } from "./lib/region-quality";
 
 type Point = { x: number; y: number };
@@ -45,10 +45,11 @@ const REGION_COLORS = [
   { stroke: "#06b6d4", fill: "rgba(6, 182, 212, 0.15)", badge: "#0891b2" },  // Cyan
 ];
 
-function Icon({ name }: { name: "upload" | "lasso" | "trash" | "play" | "left" | "right" | "refresh" }) {
+function Icon({ name }: { name: "upload" | "lasso" | "trash" | "play" | "left" | "right" | "refresh" | "eraser" }) {
   const paths = {
     upload: <><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M5 20h14" /></>,
     lasso: <><path d="M7.5 20.5c-1.8 0-3-1-3-2.4 0-1.5 1.4-2.6 3.3-2.6 1.7 0 3.2.8 3.2 2.2 0 1.6-1.6 2.8-3.5 2.8Z" /><path d="M11 17.7c5.1-.4 8.5-3.1 8.5-6.7 0-4-3.5-7-8-7s-8 2.8-8 6.3c0 2.4 1.7 4.3 4.1 5.1" /></>,
+    eraser: <><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" /><path d="M22 21H7" /><path d="m5 11 9 9" /></>,
     trash: <><path d="M4 7h16" /><path d="M9 3h6l1 4H8l1-4Z" /><path d="m7 7 1 14h8l1-14" /></>,
     play: <path d="m9 7 8 5-8 5V7Z" />,
     left: <path d="m15 18-6-6 6-6" />,
@@ -56,6 +57,37 @@ function Icon({ name }: { name: "upload" | "lasso" | "trash" | "play" | "left" |
     refresh: <><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></>,
   };
   return <svg aria-hidden="true" className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+}
+
+function isPointInPolygon(point: Point, polygon: Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+    const intersect = (yi > point.y) !== (yj > point.y) &&
+      point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function distanceToSegment(p: Point, v: Point, w: Point): number {
+  const l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2;
+  if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
+  let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
+}
+
+function isPointNearRegion(point: Point, region: SelectionRegion): boolean {
+  if (region.points.length < 2) return false;
+  if (isPointInPolygon(point, region.points)) return true;
+  const pts = region.points;
+  for (let i = 0; i < pts.length; i += 1) {
+    const next = pts[(i + 1) % pts.length];
+    if (distanceToSegment(point, pts[i], next) < 0.03) return true;
+  }
+  return false;
 }
 
 export default function Home() {
@@ -73,11 +105,17 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Multi-region states
+  // Multi-region & Notebook states
   const [regions, setRegions] = useState<SelectionRegion[]>([]);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
   const [tracedRegionId, setTracedRegionId] = useState<string | null>(null);
+  const [hoveredRegionId, setHoveredRegionId] = useState<string | null>(null);
+  const [activeTool, setActiveTool] = useState<"draw" | "eraser">("draw");
   const [renderVersion, setRenderVersion] = useState(0);
+
+  // Digital Study Notebook States (Clean DocItem Model)
+  const [docItems, setDocItems] = useState<DocItem[]>([]);
+  const [sidebarTab, setSidebarTab] = useState<"regions" | "notebook">("regions");
 
   const totalPages = pdf?.numPages ?? 0;
   const currentPageRegions = regions.filter((region) => region.pageNumber === pageNumber);
@@ -89,16 +127,135 @@ export default function Home() {
     setCurrentPoints([]);
   }
 
+  function switchTool(tool: "draw" | "eraser") {
+    cancelCurrentDrawing();
+    setHoveredRegionId(null);
+    setActiveTool(tool);
+  }
+
   function clearAllSelections() {
     cancelCurrentDrawing();
     setTracedRegionId(null);
+    setHoveredRegionId(null);
     nextRegionNumberRef.current = 1;
     setRegions([]);
+  }
+
+function stripHtmlTags(raw: string): string {
+  if (!raw) return "";
+  return raw
+    .replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, (_m, body) => {
+      const rows: string[] = [];
+      const trs = body.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
+      trs.forEach((tr: string) => {
+        const tds = tr.match(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi) || [];
+        const cells = tds.map((td: string) => td.replace(/<[^>]+>/g, "").trim()).filter(Boolean);
+        if (cells.length) rows.push(cells.join(" | "));
+      });
+      return "\n" + rows.join("\n") + "\n";
+    })
+    .replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, "\n\n### $1\n\n")
+    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, "\n- $1")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, "**$1**")
+    .replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, "**$1**")
+    .replace(/<i[^>]*>([\s\S]*?)<\/i>/gi, "*$1*")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+  function addTextToNotebook(region: SelectionRegion) {
+    const text = stripHtmlTags(region.parsedText || "");
+    if (!text) return;
+    const newItem: DocItem = {
+      id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      type: "text",
+      text,
+    };
+    setDocItems((prev) => [...prev, newItem]);
+    setSidebarTab("notebook");
+  }
+
+  function addImageToNotebook(region: SelectionRegion) {
+    if (!region.previewUrl) return;
+    const newItem: DocItem = {
+      id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      type: "image",
+      previewUrl: region.previewUrl,
+      label: region.label,
+    };
+    setDocItems((prev) => [...prev, newItem]);
+    setSidebarTab("notebook");
+  }
+
+  function addRegionToNotebook(region: SelectionRegion) {
+    if (region.parsedText?.trim()) {
+      addTextToNotebook(region);
+    } else if (region.previewUrl) {
+      addImageToNotebook(region);
+    }
+  }
+
+  function updateDocItemText(id: string, newText: string) {
+    setDocItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, text: newText } : item)),
+    );
+  }
+
+  function deleteDocItem(id: string) {
+    setDocItems((prev) => prev.filter((item) => item.id !== id));
+  }
+
+  function addTextParagraph(initialText = "") {
+    const newItem: DocItem = {
+      id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      type: "text",
+      text: initialText,
+    };
+    setDocItems((prev) => [...prev, newItem]);
+  }
+
+  function clearAllDocItems() {
+    setDocItems([]);
+  }
+
+  async function normalizeDocItemAI(id: string) {
+    const targetItem = docItems.find((item) => item.id === id && item.type === "text");
+    if (!targetItem || !targetItem.text?.trim()) return;
+
+    try {
+      const response = await fetch("/api/normalize-notebook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: targetItem.text }),
+      });
+      const data = (await response.json()) as { content?: string; error?: string };
+      if (!response.ok || !data.content) {
+        throw new Error(data.error || "Không thể chuẩn hóa đoạn này.");
+      }
+
+      setDocItems((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, text: data.content } : item)),
+      );
+    } catch (err) {
+      console.error("AI normalize error:", err);
+    }
   }
 
   function deleteRegion(id: string) {
     setRegions((prev) => prev.filter((region) => region.id !== id));
     setTracedRegionId((current) => (current === id ? null : current));
+    setHoveredRegionId((current) => (current === id ? null : current));
   }
 
   function updateRegion(id: string, patch: Partial<SelectionRegion>) {
@@ -301,6 +458,7 @@ export default function Home() {
     // 1. Render only the regions belonging to the visible PDF page.
     regions.filter((region) => region.pageNumber === pageNumber).forEach((region) => {
       if (region.points.length < 2) return;
+      const isHoveredErase = activeTool === "eraser" && region.id === hoveredRegionId;
       context.save();
       context.beginPath();
       context.moveTo(region.points[0].x * overlay.width, region.points[0].y * overlay.height);
@@ -308,15 +466,29 @@ export default function Home() {
         context.lineTo(region.points[i].x * overlay.width, region.points[i].y * overlay.height);
       }
       context.closePath();
-      context.strokeStyle = region.color.stroke;
-      context.lineWidth = Math.max(3, overlay.width / 260);
-      context.lineCap = "round";
-      context.lineJoin = "round";
-      context.shadowColor = "rgba(0, 0, 0, 0.15)";
-      context.shadowBlur = 3;
-      context.stroke();
-      context.fillStyle = region.color.fill;
-      context.fill();
+
+      if (isHoveredErase) {
+        context.strokeStyle = "#ef4444";
+        context.lineWidth = Math.max(5, overlay.width / 160);
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        context.shadowColor = "rgba(239, 68, 68, 0.65)";
+        context.shadowBlur = 12;
+        context.stroke();
+        context.fillStyle = "rgba(239, 68, 68, 0.28)";
+        context.fill();
+      } else {
+        context.strokeStyle = region.color.stroke;
+        context.lineWidth = Math.max(3, overlay.width / 260);
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        context.shadowColor = "rgba(0, 0, 0, 0.15)";
+        context.shadowBlur = 3;
+        context.stroke();
+        context.fillStyle = region.color.fill;
+        context.fill();
+      }
+
       if (region.id === tracedRegionId) {
         context.strokeStyle = "#facc15";
         context.lineWidth = Math.max(7, overlay.width / 120);
@@ -331,7 +503,7 @@ export default function Home() {
       const badgeRadius = 11;
       context.beginPath();
       context.arc(startX, startY, badgeRadius, 0, Math.PI * 2);
-      context.fillStyle = region.color.badge;
+      context.fillStyle = isHoveredErase ? "#ef4444" : region.color.badge;
       context.shadowColor = "rgba(0,0,0,0.3)";
       context.shadowBlur = 4;
       context.fill();
@@ -343,13 +515,13 @@ export default function Home() {
       context.font = "bold 11px Inter, sans-serif";
       context.textAlign = "center";
       context.textBaseline = "middle";
-      const badgeLabel = region.label.replace(/\D/g, "") || "•";
+      const badgeLabel = isHoveredErase ? "✕" : (region.label.replace(/\D/g, "") || "•");
       context.fillText(badgeLabel, startX, startY + 0.5);
       context.restore();
     });
 
     // 2. Render current active stroke being drawn
-    if (currentPoints.length >= 2) {
+    if (currentPoints.length >= 2 && activeTool === "draw") {
       context.save();
       context.beginPath();
       context.moveTo(currentPoints[0].x * overlay.width, currentPoints[0].y * overlay.height);
@@ -363,7 +535,7 @@ export default function Home() {
       context.stroke();
       context.restore();
     }
-  }, [regions, currentPoints, pageNumber, tracedRegionId, renderVersion]);
+  }, [regions, currentPoints, pageNumber, tracedRegionId, hoveredRegionId, activeTool, renderVersion]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLCanvasElement>): Point {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -375,19 +547,43 @@ export default function Home() {
 
   function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (isLoading) return;
+    const pt = pointFromEvent(event);
+    if (activeTool === "eraser") {
+      const regionToDelete = currentPageRegions.find((r) => isPointNearRegion(pt, r));
+      if (regionToDelete) {
+        deleteRegion(regionToDelete.id);
+      }
+      drawingRef.current = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+
     event.currentTarget.setPointerCapture(event.pointerId);
     setTracedRegionId(null);
     drawingRef.current = true;
-    setCurrentPoints([pointFromEvent(event)]);
+    setCurrentPoints([pt]);
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
+    const pt = pointFromEvent(event);
+    const regionUnderPointer = currentPageRegions.find((r) => isPointNearRegion(pt, r));
+
+    if (!drawingRef.current) {
+      setHoveredRegionId(regionUnderPointer?.id ?? null);
+    }
+
+    if (activeTool === "eraser") {
+      if (drawingRef.current && regionUnderPointer) {
+        deleteRegion(regionUnderPointer.id);
+      }
+      return;
+    }
+
     if (!drawingRef.current) return;
-    const nextPoint = pointFromEvent(event);
     setCurrentPoints((current) => {
       const last = current[current.length - 1];
-      if (last && Math.hypot(nextPoint.x - last.x, nextPoint.y - last.y) < 0.003) return current;
-      return [...current, nextPoint];
+      if (last && Math.hypot(pt.x - last.x, pt.y - last.y) < 0.003) return current;
+      return [...current, pt];
     });
   }
 
@@ -493,9 +689,14 @@ export default function Home() {
   }
 
   function finishDrawing(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (!drawingRef.current) return;
     drawingRef.current = false;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+
+    if (activeTool === "eraser") {
+      setHoveredRegionId(null);
+      return;
+    }
 
     if (currentPoints.length >= 3) {
       const cropped = cropRegion(currentPoints);
@@ -557,8 +758,37 @@ export default function Home() {
         <div className="document-column">
           <div className="toolbar" aria-label="Công cụ khoanh vùng">
             <div className="tool-group">
-              <button className="tool-button active" type="button"><Icon name="lasso" />Trang này {currentPageRegions.length} · Tổng {regions.length}</button>
-              <button className="tool-button" type="button" disabled={!hasRegions && currentPoints.length === 0} onClick={clearAllSelections} data-testid="clear-selection"><Icon name="trash" />Xóa tất cả vùng</button>
+              <button
+                className={`tool-button${activeTool === "draw" ? " active" : ""}`}
+                type="button"
+                onClick={() => switchTool("draw")}
+                data-testid="tool-draw"
+                title="Vẽ khoanh vùng tự do"
+              >
+                <Icon name="lasso" />
+                Vẽ vùng ({currentPageRegions.length})
+              </button>
+              <button
+                className={`tool-button${activeTool === "eraser" ? " active" : ""}`}
+                type="button"
+                onClick={() => switchTool("eraser")}
+                data-testid="tool-eraser"
+                title="Cục tẩy - Bấm hoặc kéo qua phân vùng trên slide để xóa"
+              >
+                <Icon name="eraser" />
+                Cục tẩy
+              </button>
+              <button
+                className="tool-button"
+                type="button"
+                disabled={!hasRegions && currentPoints.length === 0}
+                onClick={clearAllSelections}
+                data-testid="clear-selection"
+                title="Xóa tất cả các vùng"
+              >
+                <Icon name="trash" />
+                Xóa tất cả
+              </button>
             </div>
             <div className="file-status" title={fileName || "Chưa có tài liệu"}><span className={pdf ? "status-dot ready" : "status-dot"} />{fileName || "Chưa có tài liệu"}</div>
             <button className="process-button" type="button" disabled={!hasCurrentPageRegions || isAnyParsing} onClick={processAllRegions} data-testid="process-button"><Icon name="play" />{isAnyParsing ? "Parsing OCR..." : "Process trang này"}</button>
@@ -580,7 +810,7 @@ export default function Home() {
                   <canvas ref={canvasRef} className="pdf-canvas" data-testid="pdf-canvas" />
                   <canvas
                     ref={overlayRef}
-                    className="selection-canvas"
+                    className={`selection-canvas${activeTool === "eraser" ? " eraser-mode" : ""}`}
                     onPointerDown={handlePointerDown}
                     onPointerMove={handlePointerMove}
                     onPointerUp={finishDrawing}
@@ -590,6 +820,46 @@ export default function Home() {
                     data-closed={hasCurrentPageRegions || currentPoints.length >= 3}
                     aria-label="Vùng vẽ khoanh tự do đa phân vùng"
                   />
+                  {(() => {
+                    const hoveredRegion = currentPageRegions.find((r) => r.id === hoveredRegionId);
+                    if (!hoveredRegion || hoveredRegion.points.length === 0) return null;
+                    const minX = Math.min(...hoveredRegion.points.map((p) => p.x));
+                    const maxY = Math.max(...hoveredRegion.points.map((p) => p.y));
+                    return (
+                      <div
+                        className="hover-region-modal"
+                        style={{ left: `${minX * 100}%`, top: `${maxY * 100}%` }}
+                        data-testid="hover-region-modal"
+                      >
+                        <div className="hover-modal-badge">
+                          <span className="dot" style={{ backgroundColor: hoveredRegion.color.stroke }} />
+                          <span>{hoveredRegion.label}</span>
+                        </div>
+                        <div className="hover-modal-choice-buttons">
+                          <button
+                            type="button"
+                            className="hover-modal-choice-btn text-btn"
+                            disabled={!hoveredRegion.parsedText?.trim()}
+                            onClick={() => addTextToNotebook(hoveredRegion)}
+                            title="Dán chữ OCR vào sổ tay"
+                            data-testid="hover-add-text-btn"
+                          >
+                            Dán chữ
+                          </button>
+                          <button
+                            type="button"
+                            className="hover-modal-choice-btn image-btn"
+                            disabled={!hoveredRegion.previewUrl}
+                            onClick={() => addImageToNotebook(hoveredRegion)}
+                            title="Dán hình khoanh vào sổ tay"
+                            data-testid="hover-add-image-btn"
+                          >
+                            Dán hình
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               {isLoading && <div className="loading-overlay"><span className="spinner" />Đang xử lý PDF…</div>}
@@ -605,136 +875,168 @@ export default function Home() {
         </div>
 
         <aside className="preview-panel">
-          <div className="preview-heading">
-            <div><p className="eyebrow">KẾT QUẢ PHÂN TÍCH</p><h2>Danh sách phân vùng ({regions.length})</h2></div>
-            <span className={hasRegions ? "preview-badge ready" : "preview-badge"}>{hasRegions ? `${regions.length} vùng · ${pinnedRegions.length} ghim` : "Preview"}</span>
+          <div className="sidebar-tab-switcher">
+            <button
+              className={`sidebar-tab-btn${sidebarTab === "regions" ? " active" : ""}`}
+              type="button"
+              onClick={() => setSidebarTab("regions")}
+              data-testid="tab-regions"
+            >
+              Vùng khoanh ({regions.length})
+            </button>
+            <button
+              className={`sidebar-tab-btn${sidebarTab === "notebook" ? " active" : ""}`}
+              type="button"
+              onClick={() => setSidebarTab("notebook")}
+              data-testid="tab-notebook"
+            >
+              Sổ tay cá nhân ({docItems.length})
+            </button>
           </div>
 
-          {hasRegions ? (
-            <div className="region-list" data-testid="preview-result">
-              {regions.map((region) => (
-                <div
-                  key={region.id}
-                  id={`region-card-${region.id}`}
-                  className={`region-card quality-${region.quality.status}${region.isPinned ? " is-pinned" : ""}${tracedRegionId === region.id ? " is-traced" : ""}`}
-                >
-                  <div className="region-card-header">
-                    <div className="region-title">
-                      <span className="region-color-dot" style={{ backgroundColor: region.color.stroke }} />
-                      <span>{region.label}</span>
-                      <span className={`quality-pill ${region.qualityOverride ? "override" : region.quality.status}`}>
-                        {region.qualityOverride ? "D\u00f9ng c\u00f3 c\u1ea3nh b\u00e1o" : `${region.quality.score}% \u00b7 ${region.quality.title}`}
-                      </span>
-                      {region.isPinned && <span className="region-pin-badge">📌 Đã ghim</span>}
-                      <button type="button" className="region-page-button" onClick={() => traceRegion(region.id)}>
-                        Trang {region.pageNumber}
-                      </button>
-                    </div>
-                    <div className="region-card-actions">
-                      <button
-                        className={`region-action-btn pin-btn${region.isPinned ? " active" : ""}`}
-                        type="button"
-                        onClick={() => togglePinRegion(region.id)}
-                        title={region.isPinned ? "Bỏ ghim vùng" : "Ghim vùng để so sánh"}
-                        aria-pressed={region.isPinned}
-                        disabled={!isRegionUsable(region)}
-                      >
-                        {region.isPinned ? "Bỏ ghim" : "📌 Ghim"}
-                      </button>
-                      <button
-                        className="region-action-btn locate-btn"
-                        type="button"
-                        onClick={() => traceRegion(region.id)}
-                        title="Hiện vùng trên slide"
-                      >
-                        Xem
-                      </button>
-                      <button
-                        className="region-action-btn parse-btn"
-                        type="button"
-                        disabled={region.isParsing}
-                        onClick={() => region.previewUrl && parseRegionOCR(region.id, region.previewUrl, { force: true })}
-                        title="Chạy lại OCR"
-                      >
-                        <Icon name="refresh" /> {region.isParsing ? "Parsing..." : region.geometryQuality.status === "blocked" && !region.parsedText ? "V\u1eabn OCR" : "OCR"}
-                      </button>
-                      <button
-                        className="region-action-btn"
-                        type="button"
-                        onClick={() => deleteRegion(region.id)}
-                        title="Xóa vùng này"
-                      >
-                        <Icon name="trash" /> Xóa
-                      </button>
-                    </div>
-                  </div>
+          {sidebarTab === "notebook" ? (
+            <NotebookPanel
+              items={docItems}
+              onUpdateItemText={updateDocItemText}
+              onDeleteItem={deleteDocItem}
+              onAddTextParagraph={addTextParagraph}
+              onClearAll={clearAllDocItems}
+              onNormalizeItem={normalizeDocItemAI}
+            />
+          ) : (
+            <>
+              <div className="preview-heading">
+                <div><p className="eyebrow">KẾT QUẢ PHÂN TÍCH</p><h2>Danh sách phân vùng ({regions.length})</h2></div>
+                <span className={hasRegions ? "preview-badge ready" : "preview-badge"}>{hasRegions ? `${regions.length} vùng · ${pinnedRegions.length} ghim` : "Preview"}</span>
+              </div>
 
-                  {region.previewUrl && (
-                    <div className="preview-image-wrap">
-                      <img src={region.previewUrl} alt={`Ảnh cắt ${region.label}`} data-testid="preview-image" />
-                    </div>
-                  )}
+              {hasRegions ? (
+                <div className="region-list" data-testid="preview-result">
+                  {regions.map((region) => (
+                    <div
+                      key={region.id}
+                      id={`region-card-${region.id}`}
+                      className={`region-card quality-${region.quality.status}${region.isPinned ? " is-pinned" : ""}${tracedRegionId === region.id ? " is-traced" : ""}`}
+                    >
+                      <div className="region-card-header">
+                        <div className="region-title">
+                          <span className="region-color-dot" style={{ backgroundColor: region.color.stroke }} />
+                          <span>{region.label}</span>
+                          <span className={`quality-pill ${region.qualityOverride ? "override" : region.quality.status}`}>
+                            {region.qualityOverride ? "D\u00f9ng c\u00f3 c\u1ea3nh b\u00e1o" : `${region.quality.score}% \u00b7 ${region.quality.title}`}
+                          </span>
+                          {region.isPinned && <span className="region-pin-badge">📌 Đã ghim</span>}
+                          <button type="button" className="region-page-button" onClick={() => traceRegion(region.id)}>
+                            Trang {region.pageNumber}
+                          </button>
+                        </div>
+                        <div className="region-card-actions">
+                          <button
+                            className={`region-action-btn pin-btn${region.isPinned ? " active" : ""}`}
+                            type="button"
+                            onClick={() => togglePinRegion(region.id)}
+                            title={region.isPinned ? "Bỏ ghim vùng" : "Ghim vùng để so sánh"}
+                            aria-pressed={region.isPinned}
+                            disabled={!isRegionUsable(region)}
+                          >
+                            {region.isPinned ? "Bỏ ghim" : "📌 Ghim"}
+                          </button>
+                          <button
+                            className="region-action-btn locate-btn"
+                            type="button"
+                            onClick={() => traceRegion(region.id)}
+                            title="Hiện vùng trên slide"
+                          >
+                            Xem
+                          </button>
+                          <button
+                            className="region-action-btn parse-btn"
+                            type="button"
+                            disabled={region.isParsing}
+                            onClick={() => region.previewUrl && parseRegionOCR(region.id, region.previewUrl, { force: true })}
+                            title="Chạy lại OCR"
+                          >
+                            <Icon name="refresh" /> {region.isParsing ? "Parsing..." : region.geometryQuality.status === "blocked" && !region.parsedText ? "V\u1eabn OCR" : "OCR"}
+                          </button>
+                          <button
+                            className="region-action-btn"
+                            type="button"
+                            onClick={() => deleteRegion(region.id)}
+                            title="Xóa vùng này"
+                          >
+                            <Icon name="trash" /> Xóa
+                          </button>
+                        </div>
+                      </div>
 
-                  <div className="preview-caption">
-                    <span>PNG · {region.label} · Trang {region.pageNumber}</span>
-                    <span>{region.previewWidth} × {region.previewHeight}px</span>
-                  </div>
+                      {region.previewUrl && (
+                        <div className="preview-image-wrap">
+                          <img src={region.previewUrl} alt={`Ảnh cắt ${region.label}`} data-testid="preview-image" />
+                        </div>
+                      )}
 
-                  <div className={`quality-panel ${region.qualityOverride ? "override" : region.quality.status}`} role={region.quality.status === "blocked" ? "alert" : "status"}>
-                    <div className="quality-panel-heading">
-                      <strong>{region.qualityOverride ? "\u0110ang d\u00f9ng theo x\u00e1c nh\u1eadn c\u1ee7a b\u1ea1n" : region.quality.title}</strong>
-                      <span>{"\u0110i\u1ec3m tin c\u1eady"} {region.quality.score}/100</span>
-                    </div>
-                    <p>{region.qualityOverride ? "AI s\u1ebd nh\u1eadn v\u00f9ng n\u00e0y d\u00f9 h\u1ec7 th\u1ed1ng c\u00f2n ph\u00e1t hi\u1ec7n r\u1ee7i ro." : region.quality.summary}</p>
-                    {region.quality.reasons.length > 0 && (
-                      <ul>{region.quality.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
-                    )}
-                    {region.quality.status === "blocked" && !region.qualityOverride && (
-                      <div className="quality-actions">
-                        <button type="button" onClick={() => retryRegion(region)}>{"Khoanh l\u1ea1i"}</button>
-                        {Boolean(region.parsedText?.trim()) && (
-                          <button type="button" className="use-anyway" onClick={() => allowRegionDespiteWarning(region.id)}>
-                            {"V\u1eabn d\u00f9ng v\u00f9ng n\u00e0y"}
+                      <div className="preview-caption">
+                        <span>PNG · {region.label} · Trang {region.pageNumber}</span>
+                        <span>{region.previewWidth} × {region.previewHeight}px</span>
+                      </div>
+
+                      <div className={`quality-panel ${region.qualityOverride ? "override" : region.quality.status}`} role={region.quality.status === "blocked" ? "alert" : "status"}>
+                        <div className="quality-panel-heading">
+                          <strong>{region.qualityOverride ? "\u0110ang d\u00f9ng theo x\u00e1c nh\u1eadn c\u1ee7a b\u1ea1n" : region.quality.title}</strong>
+                          <span>{"\u0110i\u1ec3m tin c\u1eady"} {region.quality.score}/100</span>
+                        </div>
+                        <p>{region.qualityOverride ? "AI s\u1ebd nh\u1eadn v\u00f9ng n\u00e0y d\u00f9 h\u1ec7 th\u1ed1ng c\u00f2n ph\u00e1t hi\u1ec7n r\u1ee7i ro." : region.quality.summary}</p>
+                        {region.quality.reasons.length > 0 && (
+                          <ul>{region.quality.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                        )}
+                        {region.quality.status === "blocked" && !region.qualityOverride && (
+                          <div className="quality-actions">
+                            <button type="button" onClick={() => retryRegion(region)}>{"Khoanh l\u1ea1i"}</button>
+                            {Boolean(region.parsedText?.trim()) && (
+                              <button type="button" className="use-anyway" onClick={() => allowRegionDespiteWarning(region.id)}>
+                                {"V\u1eabn d\u00f9ng v\u00f9ng n\u00e0y"}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {region.qualityOverride && (
+                          <button type="button" className="quality-reset-button" onClick={() => updateRegion(region.id, { qualityOverride: false, isPinned: false })}>
+                            {"B\u1eadt l\u1ea1i b\u1ea3o v\u1ec7"}
                           </button>
                         )}
                       </div>
-                    )}
-                    {region.qualityOverride && (
-                      <button type="button" className="quality-reset-button" onClick={() => updateRegion(region.id, { qualityOverride: false, isPinned: false })}>
-                        {"B\u1eadt l\u1ea1i b\u1ea3o v\u1ec7"}
-                      </button>
-                    )}
-                  </div>
 
-                  <div className="parsed-output">
-                    <div className="parsed-output-heading">
-                      <h3>Ngữ cảnh OCR ({region.label})</h3>
-                      {region.isParsing ? <span><span className="spinner small" />Đang parse</span> : region.isTextEdited ? <span>Đã chỉnh sửa</span> : null}
+                      <div className="parsed-output">
+                        <div className="parsed-output-heading">
+                          <h3>Ngữ cảnh OCR ({region.label})</h3>
+                          {region.isParsing ? <span><span className="spinner small" />Đang parse</span> : region.isTextEdited ? <span>Đã chỉnh sửa</span> : null}
+                        </div>
+                        {region.parseError && <p className="parse-error" role="alert">{region.parseError}</p>}
+                        <textarea
+                          value={region.parsedText || ""}
+                          disabled={region.isParsing}
+                          onChange={(event) => handleRegionTextChange(region, event.target.value)}
+                          placeholder={region.isParsing ? "Đang gửi ảnh vùng chọn tới LightOn OCR..." : "Text OCR sẽ hiển thị tại đây; bạn có thể sửa hoặc nhập thủ công trước khi hỏi."}
+                          aria-label={`Chỉnh sửa text OCR của ${region.label}`}
+                        />
+                      </div>
                     </div>
-                    {region.parseError && <p className="parse-error" role="alert">{region.parseError}</p>}
-                    <textarea
-                      value={region.parsedText || ""}
-                      disabled={region.isParsing}
-                      onChange={(event) => handleRegionTextChange(region, event.target.value)}
-                      placeholder={region.isParsing ? "Đang gửi ảnh vùng chọn tới LightOn OCR..." : "Text OCR sẽ hiển thị tại đây; bạn có thể sửa hoặc nhập thủ công trước khi hỏi."}
-                      aria-label={`Chỉnh sửa text OCR của ${region.label}`}
-                    />
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="preview-empty">
-              <div className="preview-placeholder"><Icon name="lasso" /></div>
-              <h3>Chưa có vùng nào được khoanh</h3>
-              <p>Vẽ một hoặc nhiều đường khoanh tự do quanh các vùng nội dung khác nhau trên slide.</p>
-            </div>
-          )}
+              ) : (
+                <div className="preview-empty">
+                  <div className="preview-placeholder"><Icon name="lasso" /></div>
+                  <h3>Chưa có vùng nào được khoanh</h3>
+                  <p>Vẽ một hoặc nhiều đường khoanh tự do quanh các vùng nội dung khác nhau trên slide.</p>
+                </div>
+              )}
 
-          <div className="hint-card" style={{ marginTop: 20 }}>
-            <span>01</span>
-            <p>Mỗi phân vùng được cắt riêng và gửi tới OCR độc lập, không bị gộp chung nội dung.</p>
-          </div>
+              <div className="hint-card" style={{ marginTop: 20 }}>
+                <span>01</span>
+                <p>Mỗi phân vùng được cắt riêng và gửi tới OCR độc lập, không bị gộp chung nội dung.</p>
+              </div>
+            </>
+          )}
         </aside>
       </section>
 
