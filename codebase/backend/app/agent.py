@@ -90,6 +90,35 @@ class AgentState(TypedDict, total=False):
     should_use_vision: bool
     vision_regions: list[dict[str, str]]
     answer: str
+    token_usage: dict[str, int]
+
+
+def extract_token_usage(ai_message: AIMessage) -> dict[str, int]:
+    prompt_tokens = 0
+    completion_tokens = 0
+    total_tokens = 0
+
+    if hasattr(ai_message, "usage_metadata") and ai_message.usage_metadata:
+        um = ai_message.usage_metadata
+        if isinstance(um, dict):
+            prompt_tokens = um.get("input_tokens", 0) or um.get("prompt_tokens", 0)
+            completion_tokens = um.get("output_tokens", 0) or um.get("completion_tokens", 0)
+            total_tokens = um.get("total_tokens", 0) or (prompt_tokens + completion_tokens)
+
+    if total_tokens == 0 and hasattr(ai_message, "response_metadata") and ai_message.response_metadata:
+        rm = ai_message.response_metadata
+        if isinstance(rm, dict):
+            tu = rm.get("token_usage") or rm.get("usage") or {}
+            if isinstance(tu, dict):
+                prompt_tokens = tu.get("prompt_tokens") or tu.get("input_tokens") or 0
+                completion_tokens = tu.get("completion_tokens") or tu.get("output_tokens") or 0
+                total_tokens = tu.get("total_tokens") or (prompt_tokens + completion_tokens)
+
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
 
 
 def build_region_context(request: ChatRequest) -> str:
@@ -268,11 +297,9 @@ async def answer_node(state: AgentState) -> AgentState:
             *history,
             HumanMessage(content=content_blocks),
         ]
-        chain = model | StrOutputParser()
-        answer = await chain.ainvoke(messages)
+        ai_message = await model.ainvoke(messages)
     else:
-        chain = PROMPT | model | StrOutputParser()
-        answer = await chain.ainvoke(
+        prompt_val = await PROMPT.ainvoke(
             {
                 "history": history,
                 "region_context": state["region_context"],
@@ -280,7 +307,12 @@ async def answer_node(state: AgentState) -> AgentState:
                 "question": request.messages[-1].content,
             }
         )
-    return {"answer": answer}
+        ai_message = await model.ainvoke(prompt_val)
+
+    answer = ai_message.content if isinstance(ai_message.content, str) else str(ai_message.content)
+    token_usage = extract_token_usage(ai_message)
+
+    return {"answer": answer, "token_usage": token_usage}
 
 
 def finalize_node(state: AgentState) -> AgentState:

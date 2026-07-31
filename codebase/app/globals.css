@@ -306,3 +306,12 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .gdoc-markdown-table td { padding:9px 12px; border-bottom:1px solid #e2e8f0; border-right:1px solid #f1f5f9; color:#334155; background:#ffffff; }
 .gdoc-markdown-table tr:nth-child(even) td { background:#f8fafc; }
 .gdoc-markdown-table tr:hover td { background:#eff6ff; }
+
+/* Draw Tool Shape Dropdown Menu */
+.draw-tool-wrapper { position:relative; display:inline-block; }
+.draw-tool-wrapper:hover .shape-dropdown-menu,
+.draw-tool-wrapper:focus-within .shape-dropdown-menu { opacity:1; visibility:visible; transform:translateY(0); }
+.shape-dropdown-menu { position:absolute; top:calc(100% + 4px); left:0; z-index:60; display:flex; flex-direction:column; min-width:175px; padding:6px; border:1px solid var(--line); border-radius:12px; background:white; box-shadow:0 10px 25px -5px rgba(15,23,42,0.15), 0 4px 10px rgba(0,0,0,0.05); opacity:0; visibility:hidden; transform:translateY(4px); transition:all .18s ease; }
+.shape-option { display:flex; align-items:center; gap:8px; width:100%; padding:8px 10px; border:none; border-radius:8px; background:transparent; color:var(--ink); font-size:12px; font-weight:600; text-align:left; cursor:pointer; transition:all .15s; }
+.shape-option:hover { background:var(--blue-soft); color:var(--navy); }
+.shape-option.selected { background:var(--blue-soft); color:var(--navy); font-weight:750; }

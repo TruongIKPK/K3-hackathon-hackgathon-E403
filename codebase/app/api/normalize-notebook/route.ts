@@ -80,9 +80,10 @@ export async function POST(request: NextRequest) {
       content: cleanedContent,
       originalTextLength: rawTextContent.length,
     });
-  } catch (error) {
-    const fallbackMarkdown = `# SỔ TAY CHUẨN HÓA BÀI GIẢNG\n\n## 📌 Tóm Tắt Tổng Quan\n*Tổng hợp từ ${body?.blocks?.length || 0} mục ghi chép trong quyển tập.*\n\n` +
-      (body?.blocks || []).map((b: any) => `### ${b.regionLabel || "Mục ghi chép"}\n${b.content}`).join("\n\n");
+  } catch {
+    const blocks = Array.isArray(body?.blocks) ? body.blocks : [];
+    const fallbackMarkdown = `# SỔ TAY CHUẨN HÓA BÀI GIẢNG\n\n## 📌 Tóm Tắt Tổng Quan\n*Tổng hợp từ ${blocks.length} mục ghi chép trong quyển tập.*\n\n` +
+      blocks.map((b: { regionLabel?: string; content?: string }) => `### ${b.regionLabel || "Mục ghi chép"}\n${b.content || ""}`).join("\n\n");
     return jsonResponse({ content: fallbackMarkdown });
   } finally {
     clearTimeout(timeout);
