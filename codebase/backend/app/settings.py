@@ -21,11 +21,14 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-5.4-mini"
     openai_base_url: str | None = None
     request_timeout_seconds: float = 45.0
-    allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    allowed_origins: str = "*"
 
     @property
     def cors_origins(self) -> list[str]:
-        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+        if not self.allowed_origins or self.allowed_origins.strip() == "*":
+            return ["*"]
+        origins = [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+        return origins if origins else ["*"]
 
 
 @lru_cache

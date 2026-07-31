@@ -26,12 +26,15 @@ ANALYTICS_FILE = LOGS_DIR / "analytics.jsonl"
 
 def log_analytics_event(event_data: dict) -> None:
     logger.info(
-        "[DATA MINING LOG] Type: %s | Regions: %d | Images: %d | Vision: %s | Duration: %.2fms",
+        "[DATA MINING LOG] Type: %s | Regions: %d | Images: %d | Vision: %s | Duration: %.2fms | Tokens: Prompt=%d, Comp=%d, Total=%d",
         event_data.get("request_type"),
         event_data.get("region_count", 0),
         event_data.get("image_count", 0),
         event_data.get("should_use_vision", False),
         event_data.get("duration_ms", 0.0),
+        event_data.get("prompt_tokens", 0),
+        event_data.get("completion_tokens", 0),
+        event_data.get("total_tokens", 0),
     )
     try:
         with open(ANALYTICS_FILE, "a", encoding="utf-8") as f:
@@ -49,8 +52,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -114,6 +117,10 @@ async def chatbot(payload: ChatRequest):
     duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
     should_use_vision = bool(result.get("should_use_vision", False))
     answer_text = result.get("answer", "")
+    token_usage = result.get("token_usage") or {}
+    prompt_tokens = token_usage.get("prompt_tokens", 0)
+    completion_tokens = token_usage.get("completion_tokens", 0)
+    total_tokens = token_usage.get("total_tokens", 0)
 
     if image_count > 0 or should_use_vision:
         request_type = "text_with_images"
@@ -131,6 +138,9 @@ async def chatbot(payload: ChatRequest):
         "should_use_vision": should_use_vision,
         "response_length": len(answer_text),
         "duration_ms": duration_ms,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
     }
 
     log_analytics_event(analytics_event)

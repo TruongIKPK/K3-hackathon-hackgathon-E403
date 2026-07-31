@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- Preview images are in-memory data URLs. */
 
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";

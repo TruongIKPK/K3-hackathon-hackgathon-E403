@@ -45,7 +45,7 @@ const REGION_COLORS = [
   { stroke: "#06b6d4", fill: "rgba(6, 182, 212, 0.15)", badge: "#0891b2" },  // Cyan
 ];
 
-function Icon({ name }: { name: "upload" | "lasso" | "trash" | "play" | "left" | "right" | "refresh" | "eraser" }) {
+function Icon({ name }: { name: "upload" | "lasso" | "trash" | "play" | "left" | "right" | "refresh" | "eraser" | "square" | "circle" }) {
   const paths = {
     upload: <><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M5 20h14" /></>,
     lasso: <><path d="M7.5 20.5c-1.8 0-3-1-3-2.4 0-1.5 1.4-2.6 3.3-2.6 1.7 0 3.2.8 3.2 2.2 0 1.6-1.6 2.8-3.5 2.8Z" /><path d="M11 17.7c5.1-.4 8.5-3.1 8.5-6.7 0-4-3.5-7-8-7s-8 2.8-8 6.3c0 2.4 1.7 4.3 4.1 5.1" /></>,
@@ -55,6 +55,8 @@ function Icon({ name }: { name: "upload" | "lasso" | "trash" | "play" | "left" |
     left: <path d="m15 18-6-6 6-6" />,
     right: <path d="m9 18 6-6-6-6" />,
     refresh: <><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></>,
+    square: <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />,
+    circle: <ellipse cx="12" cy="12" rx="9" ry="7" />,
   };
   return <svg aria-hidden="true" className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -96,6 +98,7 @@ export default function Home() {
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const drawingRef = useRef(false);
+  const startPointRef = useRef<Point | null>(null);
   const nextRegionNumberRef = useRef(1);
   const slideTextCacheRef = useRef<Map<number, string>>(new Map());
 
@@ -111,6 +114,7 @@ export default function Home() {
   const [tracedRegionId, setTracedRegionId] = useState<string | null>(null);
   const [hoveredRegionId, setHoveredRegionId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<"draw" | "eraser">("draw");
+  const [drawShape, setDrawShape] = useState<"freehand" | "rectangle" | "ellipse">("freehand");
   const [renderVersion, setRenderVersion] = useState(0);
 
   // Digital Study Notebook States (Clean DocItem Model)
@@ -123,6 +127,7 @@ export default function Home() {
   const isAnyParsing = currentPageRegions.some((region) => region.isParsing);
 
   function cancelCurrentDrawing() {
+    startPointRef.current = null;
     drawingRef.current = false;
     setCurrentPoints([]);
   }
@@ -177,24 +182,28 @@ function stripHtmlTags(raw: string): string {
   function addTextToNotebook(region: SelectionRegion) {
     const text = stripHtmlTags(region.parsedText || "");
     if (!text) return;
-    const newItem: DocItem = {
-      id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      type: "text",
-      text,
-    };
-    setDocItems((prev) => [...prev, newItem]);
+    setDocItems((prev) => [
+      ...prev,
+      {
+        id: `item-txt-${region.id}`,
+        type: "text",
+        text,
+      },
+    ]);
     setSidebarTab("notebook");
   }
 
   function addImageToNotebook(region: SelectionRegion) {
     if (!region.previewUrl) return;
-    const newItem: DocItem = {
-      id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      type: "image",
-      previewUrl: region.previewUrl,
-      label: region.label,
-    };
-    setDocItems((prev) => [...prev, newItem]);
+    setDocItems((prev) => [
+      ...prev,
+      {
+        id: `item-img-${region.id}`,
+        type: "image",
+        previewUrl: region.previewUrl,
+        label: region.label,
+      },
+    ]);
     setSidebarTab("notebook");
   }
 
@@ -205,6 +214,7 @@ function stripHtmlTags(raw: string): string {
       addImageToNotebook(region);
     }
   }
+  void addRegionToNotebook;
 
   function updateDocItemText(id: string, newText: string) {
     setDocItems((prev) =>
@@ -528,6 +538,11 @@ function stripHtmlTags(raw: string): string {
       for (let i = 1; i < currentPoints.length; i += 1) {
         context.lineTo(currentPoints[i].x * overlay.width, currentPoints[i].y * overlay.height);
       }
+      if (drawShape !== "freehand") {
+        context.closePath();
+        context.fillStyle = "rgba(245, 158, 11, 0.15)";
+        context.fill();
+      }
       context.strokeStyle = "#f59e0b";
       context.lineWidth = Math.max(3.5, overlay.width / 260);
       context.lineCap = "round";
@@ -535,7 +550,7 @@ function stripHtmlTags(raw: string): string {
       context.stroke();
       context.restore();
     }
-  }, [regions, currentPoints, pageNumber, tracedRegionId, hoveredRegionId, activeTool, renderVersion]);
+  }, [regions, currentPoints, pageNumber, tracedRegionId, hoveredRegionId, activeTool, drawShape, renderVersion]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLCanvasElement>): Point {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -561,6 +576,7 @@ function stripHtmlTags(raw: string): string {
     event.currentTarget.setPointerCapture(event.pointerId);
     setTracedRegionId(null);
     drawingRef.current = true;
+    startPointRef.current = pt;
     setCurrentPoints([pt]);
   }
 
@@ -580,11 +596,49 @@ function stripHtmlTags(raw: string): string {
     }
 
     if (!drawingRef.current) return;
-    setCurrentPoints((current) => {
-      const last = current[current.length - 1];
-      if (last && Math.hypot(pt.x - last.x, pt.y - last.y) < 0.003) return current;
-      return [...current, pt];
-    });
+    const startPt = startPointRef.current;
+    if (!startPt) return;
+
+    if (drawShape === "freehand") {
+      setCurrentPoints((current) => {
+        const last = current[current.length - 1];
+        if (last && Math.hypot(pt.x - last.x, pt.y - last.y) < 0.003) return current;
+        return [...current, pt];
+      });
+    } else if (drawShape === "rectangle") {
+      const minX = Math.min(startPt.x, pt.x);
+      const maxX = Math.max(startPt.x, pt.x);
+      const minY = Math.min(startPt.y, pt.y);
+      const maxY = Math.max(startPt.y, pt.y);
+      const mx = (minX + maxX) / 2;
+      const my = (minY + maxY) / 2;
+      setCurrentPoints([
+        { x: minX, y: minY },
+        { x: mx, y: minY },
+        { x: maxX, y: minY },
+        { x: maxX, y: my },
+        { x: maxX, y: maxY },
+        { x: mx, y: maxY },
+        { x: minX, y: maxY },
+        { x: minX, y: my },
+      ]);
+    } else if (drawShape === "ellipse") {
+      const cx = (startPt.x + pt.x) / 2;
+      const cy = (startPt.y + pt.y) / 2;
+      const rx = Math.abs(pt.x - startPt.x) / 2;
+      const ry = Math.abs(pt.y - startPt.y) / 2;
+      if (rx < 0.002 || ry < 0.002) return;
+      const points: Point[] = [];
+      const steps = 36;
+      for (let i = 0; i < steps; i++) {
+        const angle = (i * 2 * Math.PI) / steps;
+        points.push({
+          x: cx + rx * Math.cos(angle),
+          y: cy + ry * Math.sin(angle),
+        });
+      }
+      setCurrentPoints(points);
+    }
   }
 
   function cropRegion(regionPoints: Point[]) {
@@ -690,6 +744,7 @@ function stripHtmlTags(raw: string): string {
 
   function finishDrawing(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    startPointRef.current = null;
     if (!drawingRef.current) return;
     drawingRef.current = false;
 
@@ -758,16 +813,54 @@ function stripHtmlTags(raw: string): string {
         <div className="document-column">
           <div className="toolbar" aria-label="Công cụ khoanh vùng">
             <div className="tool-group">
-              <button
-                className={`tool-button${activeTool === "draw" ? " active" : ""}`}
-                type="button"
-                onClick={() => switchTool("draw")}
-                data-testid="tool-draw"
-                title="Vẽ khoanh vùng tự do"
-              >
-                <Icon name="lasso" />
-                Vẽ vùng ({currentPageRegions.length})
-              </button>
+              <div className="draw-tool-wrapper">
+                <button
+                  className={`tool-button${activeTool === "draw" ? " active" : ""}`}
+                  type="button"
+                  onClick={() => switchTool("draw")}
+                  data-testid="tool-draw"
+                  title="Chọn kiểu khoanh vùng (Vẽ tự do, Chữ nhật, Elip)"
+                >
+                  <Icon name={drawShape === "rectangle" ? "square" : drawShape === "ellipse" ? "circle" : "lasso"} />
+                  {drawShape === "rectangle" ? "Chữ nhật" : drawShape === "ellipse" ? "Elip" : "Vẽ vùng"} ({currentPageRegions.length})
+                  <span style={{ fontSize: "10px", opacity: 0.75, marginLeft: "2px" }}>▼</span>
+                </button>
+                <div className="shape-dropdown-menu">
+                  <button
+                    type="button"
+                    className={`shape-option${activeTool === "draw" && drawShape === "freehand" ? " selected" : ""}`}
+                    onClick={() => {
+                      setDrawShape("freehand");
+                      switchTool("draw");
+                    }}
+                  >
+                    <span>✏️</span>
+                    <span>Vẽ tay (Mặc định)</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`shape-option${activeTool === "draw" && drawShape === "rectangle" ? " selected" : ""}`}
+                    onClick={() => {
+                      setDrawShape("rectangle");
+                      switchTool("draw");
+                    }}
+                  >
+                    <span>⬜</span>
+                    <span>Hình chữ nhật</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`shape-option${activeTool === "draw" && drawShape === "ellipse" ? " selected" : ""}`}
+                    onClick={() => {
+                      setDrawShape("ellipse");
+                      switchTool("draw");
+                    }}
+                  >
+                    <span>⭕</span>
+                    <span>Hình elip</span>
+                  </button>
+                </div>
+              </div>
               <button
                 className={`tool-button${activeTool === "eraser" ? " active" : ""}`}
                 type="button"
