@@ -2,3 +2,6 @@
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q -p no:cacheprovider"
+markers = [
+    "live_agent: behavioral evaluation that calls the configured language model",
+]
